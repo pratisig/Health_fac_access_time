@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Accès aux soins · Health Facilities</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#"><span class="brand-mark">+</span><span>ACCESS<span class="brand-muted">/</span>CARE</span></a>
+    <div class="top-meta"><span class="status-dot"></span> Données WorldPop · 2020</div>
+    <nav><a href="#method">Méthode</a><a href="#data">Sources de données</a><button class="icon-btn" aria-label="Aide">?</button></nav>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div><p class="eyebrow">OUTIL D’ANALYSE SPATIALE <span></span> V 0.1</p><h1>Qui peut accéder<br><em>aux soins ?</em></h1><p class="hero-copy">Mesurez la population située à moins de <strong>30 minutes</strong> d’un établissement de santé — ou importez vos propres points.</p></div>
+      <div class="hero-note"><div class="note-icon">↗</div><div><strong>Un outil pour décider.</strong><br><span>Comparez la couverture, identifiez les zones blanches, priorisez l’action.</span></div></div>
+    </section>
+
+    <section class="workspace">
+      <aside class="sidebar">
+        <div class="step"><div class="step-number">01</div><div><h2>Vos établissements</h2><p>Importez un fichier CSV avec les coordonnées de vos points de service.</p></div></div>
+        <label class="upload" for="csv-file"><input id="csv-file" type="file" accept=".csv,text/csv"><span class="upload-symbol">↑</span><strong>Déposer un fichier CSV</strong><small>ou cliquer pour parcourir</small><small class="format">latitude · longitude · nom</small></label>
+        <div class="sample-row"><span class="file-chip">CSV</span><span id="file-name">Aucun fichier importé</span><button id="load-sample" class="text-button">Voir un exemple</button></div>
+        <div class="divider"></div>
+        <div class="step"><div class="step-number">02</div><div><h2>Temps d’accès</h2><p>Choisissez le temps de trajet maximum à pied ou par la route.</p></div></div>
+        <div class="time-options" role="group" aria-label="Temps d'accès"><button data-time="15">15 <small>min</small></button><button data-time="30" class="active">30 <small>min</small></button><button data-time="45">45 <small>min</small></button><button data-time="60">60 <small>min</small></button></div>
+        <div class="transport"><span>Mode de déplacement</span><select id="mode"><option>À pied</option><option>Par la route</option></select></div>
+        <div class="data-source"><div class="source-logo">WP</div><div><strong>Population WorldPop</strong><span>Résolution 100 m · global</span></div><span class="check">✓</span></div>
+        <button class="primary" id="run-analysis"><span>Actualiser l’analyse</span><span>→</span></button>
+        <p class="privacy">Les fichiers restent dans votre navigateur et ne sont jamais envoyés.</p>
+      </aside>
+      <section class="results">
+        <div class="map-wrap"><div id="map"></div><div class="map-overlay"><span class="legend-dot"></span> Population accessible <span class="legend-line"></span> Zone de temps sélectionnée</div><div class="map-controls"><button id="zoom-in">+</button><button id="zoom-out">−</button><button id="locate" title="Recentrer">⌖</button></div></div>
+        <div class="results-head"><div><p class="eyebrow">RÉSULTATS DE L’ANALYSE</p><h2>Population accessible <span id="time-label">en 30 min</span></h2></div><button class="export" id="export-csv">↓ &nbsp;Exporter CSV</button></div>
+        <div class="kpis"><div class="kpi"><span class="kpi-label">PERSONNES ACCESSIBLES</span><strong id="total-pop">—</strong><small id="coverage">— de la population couverte</small></div><div class="kpi"><span class="kpi-label">ÉTABLISSEMENTS</span><strong id="facility-count">0</strong><small>points analysés</small></div><div class="kpi"><span class="kpi-label">MOYENNE / POINT</span><strong id="average-pop">—</strong><small>personnes par établissement</small></div></div>
+        <div class="table-card"><div class="table-title"><h3>Détail par établissement</h3><label class="search"><span>⌕</span><input id="search" placeholder="Rechercher…"></label></div><div class="table-scroll"><table><thead><tr><th>ÉTABLISSEMENT <span>↕</span></th><th>COORDONNÉES</th><th>PERSONNES ACCESSIBLES <span>↕</span></th><th>COUVERTURE</th></tr></thead><tbody id="facility-table"><tr class="empty"><td colspan="4">Importez un CSV ou chargez l’exemple pour commencer.</td></tr></tbody></table></div></div>
+        <p class="disclaimer" id="method">* Estimation basée sur les surfaces de temps d’accès et la population WorldPop. Les résultats sont indicatifs et doivent être interprétés avec les données locales.</p>
+      </section>
+    </section>
+  </main>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script src="app.js"></script>
+</body>
+</html>
