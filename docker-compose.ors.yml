@@ -1,0 +1,56 @@
+# Instance openrouteservice dédiée — indispensable pour les seuils > 60 minutes
+# en profil motorisé, que l'API publique HeiGIT refuse (erreur 3004).
+#
+#   1. télécharger un extrait OSM du pays, par exemple :
+#      wget -P ors/files https://download.geofabrik.de/africa/senegal-and-gambia-latest.osm.pbf
+#   2. adapter ORS_CONFIG_FILE ou les variables ci-dessous ;
+#   3. docker compose -f docker-compose.ors.yml up -d
+#   4. renseigner ORS_BASE_URL = "http://localhost:8080/ors" dans les secrets.
+#
+# Dimensionnement observé : un pays de la taille du Sénégal tient dans ~4 Go de
+# RAM ; un grand pays (Nigéria, RDC) demande 8 à 16 Go et un premier démarrage
+# de 20 à 60 minutes pour la construction du graphe.
+
+services:
+  ors:
+    image: openrouteservice/openrouteservice:v9.0.0
+    container_name: ors-health-access
+    ports:
+      - "8080:8082"
+    volumes:
+      - ./ors/files:/home/ors/files          # extraits .osm.pbf
+      - ./ors/graphs:/home/ors/graphs        # graphes construits (persistants)
+      - ./ors/elevation:/home/ors/elevation_cache
+      - ./ors/logs:/home/ors/logs
+    environment:
+      XMS: 2g
+      XMX: 8g
+      ORS_CONFIG_LOCATION: ""
+
+      # Source des données
+      ors.engine.source_file: /home/ors/files/senegal-and-gambia-latest.osm.pbf
+
+      # Profils activés : voiture et marche, conformément à l'interface.
+      ors.engine.profiles.driving-car.enabled: "true"
+      ors.engine.profiles.foot-walking.enabled: "true"
+
+      # ⚠️ Point décisif : lever le plafond d'une heure des isochrones.
+      # 7200 s = 120 minutes, soit le douzième seuil de l'application.
+      ors.endpoints.isochrones.maximum_range_time: 7200
+      ors.endpoints.isochrones.maximum_intervals: 12
+      ors.endpoints.isochrones.maximum_locations: 5
+      ors.endpoints.isochrones.allow_compute_area: "true"
+
+      # L'algorithme rapide « fastisochrones » rend les grandes isochrones
+      # calculables en quelques secondes ; il n'est disponible qu'en auto-hébergé.
+      ors.engine.profiles.driving-car.preparation.methods.fastisochrones.enabled: "true"
+      ors.engine.profiles.driving-car.preparation.methods.fastisochrones.threads: 2
+      ors.engine.profiles.driving-car.preparation.methods.fastisochrones.maxcellnodes: 5000
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8082/ors/v2/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 20m
+    restart: unless-stopped
