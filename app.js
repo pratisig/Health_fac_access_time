@@ -68,22 +68,22 @@ const POP_LABELS = {
 const $ = id => document.getElementById(id);
 
 const state = {
-  country: '',
-  countryName: '',
-  category: 'hospitals',
-  facilities: [],
-  stats: new Map(),
-  populationTypes: [],
-  layerName: '',
-  bounds: null,
-  drawing: false,
-  dataReady: false,
-  statsReady: false,
-  loadId: 0,
-  selectedRanges: new Set(RANGES),
-  markers: []
+  country:'',
+  countryName:'',
+  category:'hospitals',
+  facilities:[],
+  stats:new Map(),
+  populationTypes:[],
+  layerName:'',
+  bounds:null,
+  drawing:false,
+  dataReady:false,
+  statsReady:false,
+  loadId:0,
+  selectedRanges:new Set(RANGES),
+  markers:[],
+  statsError:''
 };
-
 /* -------------------------------------------------------------------------- */
 /* Carte                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -408,26 +408,52 @@ renderLegend();
 /* -------------------------------------------------------------------------- */
 /* Statistiques Parquet                                                       */
 /* -------------------------------------------------------------------------- */
-
 async function loadStats(loadId) {
   state.stats = new Map();
   state.populationTypes = [];
   state.statsReady = false;
+  state.statsError = '';
 
   try {
-    const {
-      asyncBufferFromUrl,
-      parquetReadObjects
-    } = await import(
-      'https://cdn.jsdelivr.net/npm/hyparquet/src/hyparquet.min.js'
-    );
+    /*
+     * Le Parquet est téléchargé entièrement.
+     * Cette méthode évite les problèmes de requêtes HEAD ou Range
+     * rencontrés sur certains navigateurs et sur GitHub Pages.
+     *
+     * hyparquet-compressors permet également de lire les fichiers
+     * compressés en ZSTD.
+     */
 
-    const file = await asyncBufferFromUrl({
-      url: statsUrl()
-    });
+    const [
+      { parquetReadObjects },
+      { compressors }
+    ] = await Promise.all([
+      import(
+        'https://cdn.jsdelivr.net/npm/hyparquet/+esm'
+      ),
+
+      import(
+        'https://cdn.jsdelivr.net/npm/hyparquet-compressors/+esm'
+      )
+    ]);
+
+    const url = statsUrl();
+
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      throw new Error(
+        `téléchargement Parquet HTTP ${response.status}`
+      );
+    }
+
+    const file = await response.arrayBuffer();
 
     const rows = await parquetReadObjects({
       file,
+
+      compressors,
+
       columns: [
         'range',
         'population_type',
@@ -442,14 +468,25 @@ async function loadStats(loadId) {
     }
 
     for (const row of rows) {
-      if (String(row.admin_level) !== 'ADM0') {
+      const adminLevel =
+        String(row.admin_level)
+          .trim()
+          .toUpperCase();
+
+      if (adminLevel !== 'ADM0') {
         continue;
       }
 
-      const range = Number(row.range);
-      const type = String(row.population_type);
+      const range =
+        Number(row.range);
 
-      if (!Number.isFinite(range) || !type) {
+      const type =
+        String(row.population_type);
+
+      if (
+        !Number.isFinite(range) ||
+        !type
+      ) {
         continue;
       }
 
@@ -458,18 +495,23 @@ async function loadStats(loadId) {
       }
 
       state.stats.get(range)[type] = {
-        population: Number(row.population),
-        share: Number(row.population_share)
+        population:
+          Number(row.population),
+
+        share:
+          Number(row.population_share)
       };
 
-      if (!state.populationTypes.includes(type)) {
+      if (
+        !state.populationTypes.includes(type)
+      ) {
         state.populationTypes.push(type);
       }
     }
 
     if (!state.stats.size) {
       throw new Error(
-        'aucune ligne ADM0 dans le Parquet'
+        'aucune ligne ADM0 trouvée dans le Parquet'
       );
     }
 
@@ -484,13 +526,11 @@ async function loadStats(loadId) {
       error
     );
 
-    if (loadId === state.loadId) {
-      notice(
-        'Les isochrones sont chargées, mais le Parquet WorldPop ' +
-        `n’a pas pu être lu : ${error.message}`,
-        'error'
-      );
-    }
+    state.statsError =
+      error?.message ||
+      String(error);
+
+    renderCharts();
   }
 }
 
@@ -847,20 +887,23 @@ async function loadCountryData() {
       `${state.countryName} · données HeiGIT chargées`
     );
 
-    notice(
-      state.statsReady
-        ? (
-          'Isochrones HeiGIT et agrégats WorldPop chargés. ' +
-          'Importez ou dessinez vos structures.'
-        )
-        : (
-          'Isochrones HeiGIT chargées. ' +
-          'Les statistiques démographiques sont indisponibles.'
-        ),
-      state.statsReady
-        ? 'success'
-        : 'error'
-    );
+notice(
+  state.statsReady
+    ? (
+      'Isochrones HeiGIT et agrégats WorldPop chargés. ' +
+      'Importez ou dessinez vos structures.'
+    )
+    : (
+      'Isochrones chargées, mais statistiques indisponibles : ' +
+      (
+        state.statsError ||
+        'erreur inconnue'
+      )
+    ),
+  state.statsReady
+    ? 'success'
+    : 'error'
+);
   } catch (error) {
     console.error(error);
 
