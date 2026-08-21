@@ -1,61 +1,86 @@
 #!/usr/bin/env python3
-"""Calcul réel option B : isochrone ORS par établissement + somme WorldPop.
+"""Jointure locale déterministe : points -> isochrones HeiGIT -> WorldPop.
 
-Usage:
-  ORS_API_KEY=xxx python scripts/compute_access.py \
-    --facilities facilities.csv --population sen_ppp_2020.tif \
-    --minutes 30,60 --output public/results.json
-
-Le CSV doit contenir nom, latitude et longitude (accents acceptés).
-La colonne population du fichier WorldPop est un décompte de personnes par pixel.
+Ce script n'appelle aucun moteur d'isochrones et ne crée aucun buffer. Il est utile
+lorsqu'on dispose d'un export vectoriel HeiGIT et du raster WorldPop correspondant.
 """
-import argparse, json, os, sys, time
+from __future__ import annotations
+
+import argparse
 from pathlib import Path
-import pandas as pd
-import requests
+
 import geopandas as gpd
-from shapely.geometry import shape
+import pandas as pd
 from rasterstats import zonal_stats
 
-ORS_URL = "https://api.openrouteservice.org/v2/isochrones/driving-car"
 
-def col(df, names):
-    for name in names:
-        if name in df.columns: return name
-    raise ValueError(f"Colonne absente. Attendues : {', '.join(names)}")
+def find_column(columns, candidates):
+    normalized = {str(c).strip().lower(): c for c in columns}
+    for candidate in candidates:
+        if candidate in normalized:
+            return normalized[candidate]
+    raise ValueError(f"Colonne absente (attendu : {', '.join(candidates)})")
 
-def get_isochrone(lon, lat, seconds, key):
-    r = requests.post(ORS_URL, headers={"Authorization": key, "Content-Type": "application/json"},
-        json={"locations": [[lon, lat]], "range": [seconds], "range_type": "time", "attributes": ["area"]}, timeout=120)
-    if r.status_code != 200:
-        raise RuntimeError(f"OpenRouteService ({r.status_code}) : {r.text[:300]}")
-    return shape(r.json()["features"][0]["geometry"])
 
-def main():
-    p=argparse.ArgumentParser()
-    p.add_argument("--facilities", required=True); p.add_argument("--population", required=True)
-    p.add_argument("--minutes", default="30,60"); p.add_argument("--output", default="public/results.json")
-    p.add_argument("--profile", default="driving-car", choices=["driving-car","foot-walking"])
-    a=p.parse_args(); key=os.getenv("ORS_API_KEY")
-    if not key: sys.exit("ORS_API_KEY est obligatoire : https://openrouteservice.org/dev/#/signup")
-    facilities=pd.read_csv(a.facilities); name=col(facilities,["nom","name","facility","etablissement"]); lat=col(facilities,["latitude","lat"]); lon=col(facilities,["longitude","lon","lng"])
-    facilities=facilities.dropna(subset=[lat,lon]); gdf=gpd.GeoDataFrame(facilities, geometry=gpd.points_from_xy(facilities[lon],facilities[lat]), crs="EPSG:4326")
-    minutes=[int(x) for x in a.minutes.split(",")]; results=[]
-    print(f"{len(gdf)} points · {minutes} minutes · profil {a.profile}")
-    for i,row in gdf.iterrows():
-        item={"name":str(row[name]),"latitude":float(row[lat]),"longitude":float(row[lon]),"access":{},"zones":{}}
-        for mins in minutes:
-            # ORS accepte un profil dans l’URL ; éviter les appels silencieux sur un mauvais profil.
-            url=ORS_URL.replace("driving-car",a.profile)
-            resp=requests.post(url,headers={"Authorization":key,"Content-Type":"application/json"},json={"locations":[[float(row[lon]),float(row[lat])]],"range":[mins*60],"range_type":"time","attributes":["area"]},timeout=120)
-            if resp.status_code!=200: raise RuntimeError(f"ORS {resp.status_code}: {resp.text[:300]}")
-            polygon=shape(resp.json()["features"][0]["geometry"])
-            stats=zonal_stats([polygon],a.population,stats=["sum"],nodata=0,all_touched=True)[0]
-            item["access"][str(mins)]=int(round(stats.get("sum") or 0))
-            item["zones"][str(mins)]=polygon.__geo_interface__
-            time.sleep(.15)
-        results.append(item); print(f"  ✓ {item['name']}")
-    out=Path(a.output); out.parent.mkdir(parents=True,exist_ok=True)
-    json.dump({"source":"WorldPop population count + OpenRouteService isochrones","profile":a.profile,"minutes":minutes,"generated_at":time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime()),"facilities":results},open(out,"w"),ensure_ascii=False,indent=2)
-    print(f"Résultats écrits dans {out}")
-if __name__=="__main__": main()
+def read_facilities(path: str) -> gpd.GeoDataFrame:
+    if Path(path).suffix.lower() == ".csv":
+        frame = pd.read_csv(path)
+        lat = find_column(frame.columns, ["latitude", "lat"])
+        lon = find_column(frame.columns, ["longitude", "lon", "lng"])
+        name = find_column(frame.columns, ["nom", "name", "facility", "etablissement"])
+        frame = frame.dropna(subset=[lat, lon]).copy()
+        frame["nom"] = frame[name].astype(str)
+        return gpd.GeoDataFrame(frame, geometry=gpd.points_from_xy(frame[lon], frame[lat]), crs="EPSG:4326")
+    points = gpd.read_file(path)
+    if not all(points.geometry.geom_type.isin(["Point", "MultiPoint"])):
+        raise ValueError("Le fichier de structures doit contenir uniquement des points")
+    if "nom" not in points:
+        points["nom"] = [f"Structure {i + 1}" for i in range(len(points))]
+    return points.to_crs(4326)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--facilities", required=True, help="CSV ou fichier vectoriel de points")
+    parser.add_argument("--isochrones", required=True, help="GeoPackage/GeoJSON/SHP vectoriel HeiGIT")
+    parser.add_argument("--population", required=True, help="GeoTIFF WorldPop (population par pixel)")
+    parser.add_argument("--range-field", default="range", help="Attribut du seuil en secondes")
+    parser.add_argument("--output", default="results.csv")
+    args = parser.parse_args()
+
+    facilities = read_facilities(args.facilities)
+    zones = gpd.read_file(args.isochrones)
+    if args.range_field not in zones:
+        raise ValueError(f"Attribut {args.range_field!r} absent des isochrones")
+    zones = zones[[args.range_field, "geometry"]].dropna().copy()
+    zones[args.range_field] = pd.to_numeric(zones[args.range_field], errors="raise")
+    zones = zones.to_crs(4326)
+
+    # Une géométrie par seuil. Les cellules/parties contiguës ont déjà été
+    # regroupées lors de la vectorisation ; dissolve conserve les MultiPolygons.
+    dissolved = zones.dissolve(by=args.range_field, as_index=False)
+    pop = zonal_stats(dissolved.geometry, args.population, stats=["sum"], nodata=0, all_touched=False)
+    dissolved["population_worldpop"] = [round(item.get("sum") or 0) for item in pop]
+
+    joined = gpd.sjoin(facilities, dissolved, predicate="within", how="left")
+    # Des isochrones cumulatives peuvent se recouvrir : le seuil minimal est le
+    # temps d'accès pertinent, exactement comme dans l'application web.
+    joined = joined.sort_values(args.range_field).groupby(joined.index).first()
+    joined["temps_minutes"] = joined[args.range_field] / 60
+    columns = ["nom", "geometry", args.range_field, "temps_minutes", "population_worldpop"]
+    result = gpd.GeoDataFrame(joined[columns], geometry="geometry", crs=4326)
+
+    output = Path(args.output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    if output.suffix.lower() in {".geojson", ".json"}:
+        result.to_file(output, driver="GeoJSON")
+    else:
+        table = result.drop(columns="geometry")
+        table["longitude"] = result.geometry.x
+        table["latitude"] = result.geometry.y
+        table.to_csv(output, index=False)
+    print(f"{len(result)} structures écrites dans {output}")
+
+
+if __name__ == "__main__":
+    main()
