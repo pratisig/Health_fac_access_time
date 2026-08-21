@@ -1,5 +1,22 @@
 __pycache__/
 *.py[cod]
 .venv/
+venv/
 .env
 .DS_Store
+
+# Secrets — ne jamais committer
+.streamlit/secrets.toml
+
+# Caches et données volumineuses
+.pytest_cache/
+.ruff_cache/
+.cache/
+*.tif
+*.tiff
+*.pmtiles
+*.parquet
+*.gpkg
+
+# Instance openrouteservice locale
+ors/

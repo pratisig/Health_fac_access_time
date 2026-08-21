@@ -1,18 +1,25 @@
-# Outils SIG hors ligne
+# Outil SIG hors ligne
 
-L’application web consomme directement les PMTiles et Parquet officiels OpenAccessLens. Ces scripts ne sont nécessaires que pour reproduire une analyse à partir de fichiers téléchargés localement sur HDX.
+L'application consomme directement les PMTiles et Parquet officiels
+OpenAccessLens, et calcule ses propres isochrones via openrouteservice. Ce
+script ne sert qu'à un cas particulier : reproduire une analyse à partir d'une
+ressource HDX distribuée sous forme de **raster de temps d'accès**.
+
+> Le script `compute_access.py` a été retiré. Sa logique — localiser un point
+> dans une isochrone existante puis lui attribuer l'agrégat correspondant —
+> répondait à une autre question que celle de l'application. La somme zonale
+> WorldPop dans des isochrones propres à chaque structure est désormais assurée
+> par `src/population.py` et `src/spatial_analysis.py`, avec tests.
 
 ## Installation
 
 ```bash
 python -m venv .venv
 . .venv/bin/activate
-pip install -r requirements.txt
+pip install -r ../requirements.txt
 ```
 
-## 1. Raster HeiGIT vers isochrones vectorielles
-
-Si une ressource HDX est fournie sous forme de GeoTIFF de temps d’accès (secondes) :
+## Raster de temps d'accès vers isochrones vectorielles
 
 ```bash
 python scripts/vectorize_access_raster.py access_time.tif isochrones.gpkg
@@ -21,13 +28,14 @@ python scripts/vectorize_access_raster.py access_time.tif isochrones.gpkg
 Le script :
 
 1. respecte le masque NoData ;
-2. classe les temps aux seuils 600, 1 200, …, 7 200 secondes ;
+2. classe les temps aux seuils 600, 1 200, … 7 200 secondes ;
 3. regroupe les cellules contiguës avec une connectivité de 8 ;
 4. répare les géométries invalides ;
 5. conserve le seuil dans `range` ;
 6. écrit les polygones en EPSG:4326.
 
-Aucune simplification n’est appliquée par défaut. Elle doit être demandée explicitement, dans les unités du SCR source :
+Aucune simplification n'est appliquée par défaut. Elle doit être demandée
+explicitement, dans les unités du SCR source :
 
 ```bash
 python scripts/vectorize_access_raster.py access_time.tif isochrones.gpkg --simplify 25
@@ -39,26 +47,5 @@ Pour un raster déjà classé :
 python scripts/vectorize_access_raster.py classes.tif isochrones.gpkg --native-classes
 ```
 
-## 2. Jointure des structures et somme WorldPop
-
-```bash
-python scripts/compute_access.py \
-  --facilities facilities.csv \
-  --isochrones isochrones.gpkg \
-  --population worldpop_population.tif \
-  --output results.csv
-```
-
-Le script réalise une vraie jointure point-dans-polygone. Si les zones sont cumulatives et se superposent, il conserve le plus petit seuil. La population est calculée par somme zonale du raster WorldPop, sans buffer, appel de routage ou valeur aléatoire.
-
-Le CSV d’entrée doit contenir au minimum :
-
-```csv
-nom,latitude,longitude
-Hôpital 1,14.7167,-17.4677
-Centre de santé 2,14.7150,-17.2730
-```
-
-## Remarque sur les données actuelles
-
-Le catalogue OpenAccessLens utilisé par l’application publie déjà les isochrones en tuiles vectorielles PMTiles et les agrégats WorldPop en Parquet. La vectorisation ci-dessus vise seulement les ressources historiques ou téléchargements HDX distribués en raster. Toujours inspecter le SCR, l’unité, NoData et les métadonnées du fichier avant traitement.
+Toujours inspecter le SCR, l'unité, la valeur NoData et les métadonnées du
+fichier avant traitement.
