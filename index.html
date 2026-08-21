@@ -3,116 +3,445 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Analyse réelle de l’accessibilité aux soins avec les isochrones HeiGIT OpenAccessLens et les agrégats WorldPop.">
+
+  <meta
+    name="description"
+    content="Analyse réelle de l’accessibilité aux soins avec les isochrones HeiGIT OpenAccessLens et les agrégats WorldPop."
+  >
+
   <title>Health HeiGIT Isochrone</title>
+
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
-  <link href="https://unpkg.com/maplibre-gl@5.7.1/dist/maplibre-gl.css" rel="stylesheet">
+
+  <link
+    href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap"
+    rel="stylesheet"
+  >
+
+  <link
+    href="https://unpkg.com/maplibre-gl@5.7.1/dist/maplibre-gl.css"
+    rel="stylesheet"
+  >
+
   <link rel="stylesheet" href="styles.css">
 </head>
+
 <body>
   <header class="topbar">
-    <a class="brand" href="#"><span class="brand-mark">+</span><span>HEALTH <b>ACCESS</b></span></a>
-    <p class="source-status"><span id="source-dot" class="status-dot idle"></span><span id="source-status">Sélectionnez un pays</span></p>
-    <nav><a href="#methodologie">Méthodologie</a><a id="hdx-link" href="https://data.humdata.org/organization/heidelberg-institute-for-geoinformation-technology" target="_blank" rel="noopener">Données HDX ↗</a></nav>
+    <a class="brand" href="#">
+      <span class="brand-mark">+</span>
+      <span>HEALTH <b>ACCESS</b></span>
+    </a>
+
+    <p class="source-status">
+      <span id="source-dot" class="status-dot idle"></span>
+      <span id="source-status">Sélectionnez un pays</span>
+    </p>
+
+    <nav>
+      <a href="#methodologie">Méthodologie</a>
+
+      <a
+        id="hdx-link"
+        href="https://data.humdata.org/organization/heidelberg-institute-for-geoinformation-technology"
+        target="_blank"
+        rel="noopener"
+      >
+        Données HDX ↗
+      </a>
+    </nav>
   </header>
 
   <main>
     <section class="intro">
       <div>
         <p class="eyebrow">OPENACCESSLENS · HEIGIT · WORLDPOP</p>
-        <h1>L’accessibilité aux soins,<br><em>mesurée par le réseau réel.</em></h1>
+
+        <h1>
+          L’accessibilité aux soins,<br>
+          <em>mesurée par le réseau réel.</em>
+        </h1>
       </div>
-      <p class="intro-copy">Importez ou dessinez vos structures. Chaque point est classé dans une véritable zone de temps de trajet HeiGIT, puis associé aux statistiques démographiques WorldPop publiées pour cette zone.</p>
+
+      <p class="intro-copy">
+        Importez ou dessinez vos structures. Chaque point est classé dans
+        une véritable zone de temps de trajet HeiGIT, puis associé aux
+        statistiques démographiques WorldPop publiées pour cette zone.
+      </p>
     </section>
 
     <section class="app-shell">
       <aside class="sidebar" aria-label="Paramètres de l’analyse">
-        <div class="section-title"><span>01</span><div><h2>Territoire & service</h2><p>Les pays disponibles sont lus directement dans le catalogue OpenAccessLens.</p></div></div>
-        <label class="field">Pays
-          <select id="country"><option value="">Chargement du catalogue…</option></select>
-        </label>
-        <label class="field">Catégorie HeiGIT
-          <select id="category">
-            <option value="hospitals">Hôpitaux</option>
-            <option value="primary_healthcare">Soins de santé primaires</option>
+        <div class="section-title">
+          <span>01</span>
+
+          <div>
+            <h2>Territoire & service</h2>
+
+            <p>
+              Les pays disponibles sont lus directement dans le catalogue
+              OpenAccessLens.
+            </p>
+          </div>
+        </div>
+
+        <label class="field">
+          Pays
+
+          <select id="country">
+            <option value="">Chargement du catalogue…</option>
           </select>
         </label>
-        <label class="field">Indicateur démographique
-          <select id="population-type"><option value="total">Population totale</option></select>
+
+        <label class="field">
+          Catégorie HeiGIT
+
+          <select id="category">
+            <option value="hospitals">Hôpitaux</option>
+
+            <option value="primary_healthcare">
+              Soins de santé primaires
+            </option>
+          </select>
         </label>
+
+        <label class="field">
+          Indicateur démographique
+
+          <select id="population-type">
+            <option value="total">Population totale</option>
+          </select>
+        </label>
+
         <div class="dataset-card">
           <span class="dataset-logo">H</span>
-          <div><strong>HeiGIT OpenAccessLens</strong><small id="dataset-detail">Isochrones motorisées · 10–120 min</small></div>
+
+          <div>
+            <strong>HeiGIT OpenAccessLens</strong>
+
+            <small id="dataset-detail">
+              Isochrones motorisées · 10–120 min
+            </small>
+          </div>
+
           <span id="dataset-check" class="dataset-check">—</span>
         </div>
 
         <div class="rule"></div>
-        <div class="section-title"><span>02</span><div><h2>Vos structures</h2><p>CSV WGS84, Shapefile compressé (.zip), fichier .shp, ou dessin sur la carte.</p></div></div>
+
+        <div class="section-title">
+          <span>02</span>
+
+          <div>
+            <h2>Vos structures</h2>
+
+            <p>
+              CSV WGS84, Shapefile compressé (.zip), fichier .shp,
+              ou dessin sur la carte.
+            </p>
+          </div>
+        </div>
+
         <label class="upload" for="facility-file">
-          <input id="facility-file" type="file" accept=".csv,.zip,.shp,text/csv,application/zip">
-          <span class="upload-icon">↑</span><strong>Importer CSV ou Shapefile</strong>
+          <input
+            id="facility-file"
+            type="file"
+            accept=".csv,.zip,.shp,text/csv,application/zip"
+          >
+
+          <span class="upload-icon">↑</span>
+
+          <strong>Importer CSV ou Shapefile</strong>
+
           <small>CSV : nom, latitude, longitude</small>
         </label>
+
         <div class="button-row">
-          <button id="draw-point" class="secondary" type="button">＋ Dessiner un point</button>
-          <button id="clear-points" class="ghost" type="button" disabled>Effacer</button>
+          <button id="draw-point" class="secondary" type="button">
+            ＋ Dessiner un point
+          </button>
+
+          <button id="clear-points" class="ghost" type="button" disabled>
+            Effacer
+          </button>
         </div>
-        <p id="file-info" class="file-info">Aucune structure chargée.</p>
-        <div id="notice" class="notice" role="status" aria-live="polite">Choisissez d’abord un pays pour charger les données officielles.</div>
-        <p class="privacy">Les fichiers importés restent dans votre navigateur.</p>
+
+        <p id="file-info" class="file-info">
+          Aucune structure chargée.
+        </p>
+
+        <div id="notice" class="notice" role="status" aria-live="polite">
+          Choisissez d’abord un pays pour charger les données officielles.
+        </div>
+
+        <p class="privacy">
+          Les fichiers importés restent dans votre navigateur.
+        </p>
       </aside>
 
       <section class="results">
         <div class="map-card">
-          <div id="map" aria-label="Carte interactive des isochrones"></div>
-          <div id="map-loader" class="map-loader hidden"><span></span><b>Chargement des données HeiGIT…</b><small>Lecture des PMTiles et statistiques WorldPop</small></div>
-          <div class="map-tools">
-            <button id="fit-country" title="Recentrer sur le pays" aria-label="Recentrer">⌖</button>
+          <div
+            id="map"
+            aria-label="Carte interactive des isochrones"
+          ></div>
+
+          <div id="map-loader" class="map-loader hidden">
+            <span></span>
+
+            <b>Chargement des données HeiGIT…</b>
+
+            <small>
+              Lecture des PMTiles et statistiques WorldPop
+            </small>
           </div>
-          <div id="legend" class="legend"><strong>Temps motorisé vers le service</strong><div id="legend-items"></div><small>Source : HeiGIT / OpenAccessLens</small></div>
+
+          <div class="map-tools">
+            <button
+              id="fit-country"
+              title="Recentrer sur le pays"
+              aria-label="Recentrer"
+            >
+              ⌖
+            </button>
+          </div>
+
+          <div id="legend" class="legend">
+            <strong>
+              Isochrones affichées (sélection multiple)
+            </strong>
+
+            <div id="legend-items"></div>
+
+            <div class="legend-actions">
+              <button id="select-all-ranges" type="button">
+                Tout
+              </button>
+
+              <button id="clear-ranges" type="button">
+                Aucun
+              </button>
+            </div>
+
+            <small>
+              Temps motorisé · HeiGIT / OpenAccessLens
+            </small>
+          </div>
         </div>
 
         <div class="results-heading">
-          <div><p class="eyebrow">RÉSULTATS OBSERVÉS</p><h2>Classe d’accessibilité des structures</h2></div>
-          <button id="export-csv" class="export" disabled>↓ Exporter CSV</button>
+          <div>
+            <p class="eyebrow">RÉSULTATS OBSERVÉS</p>
+
+            <h2>
+              Classe d’accessibilité des structures
+            </h2>
+          </div>
+
+          <button id="export-csv" class="export" disabled>
+            ↓ Exporter CSV
+          </button>
         </div>
+
         <div class="kpis">
-          <article><span>STRUCTURES ANALYSÉES</span><strong id="kpi-analyzed">0</strong><small id="kpi-analyzed-sub">sur 0 importée</small></article>
-          <article><span>TEMPS MÉDIAN</span><strong id="kpi-time">—</strong><small>classe HeiGIT, trajet motorisé</small></article>
-          <article><span>CLASSES REPRÉSENTÉES</span><strong id="kpi-classes">0</strong><small>seuils distincts observés</small></article>
+          <article>
+            <span>STRUCTURES ANALYSÉES</span>
+
+            <strong id="kpi-analyzed">0</strong>
+
+            <small id="kpi-analyzed-sub">
+              sur 0 importée
+            </small>
+          </article>
+
+          <article>
+            <span>TEMPS MÉDIAN</span>
+
+            <strong id="kpi-time">—</strong>
+
+            <small>
+              classe HeiGIT, trajet motorisé
+            </small>
+          </article>
+
+          <article>
+            <span>CLASSES REPRÉSENTÉES</span>
+
+            <strong id="kpi-classes">0</strong>
+
+            <small>
+              seuils distincts observés
+            </small>
+          </article>
+        </div>
+
+        <div class="charts" id="charts">
+          <article class="chart-card">
+            <div class="chart-title">
+              <div>
+                <h3>Population accessible par seuil</h3>
+
+                <p id="curve-caption">
+                  Valeurs cumulées OpenAccessLens
+                </p>
+              </div>
+            </div>
+
+            <div id="access-chart" class="bar-chart">
+              <p class="chart-empty">
+                Statistiques démographiques indisponibles.
+              </p>
+            </div>
+          </article>
+
+          <article class="chart-card">
+            <div class="chart-title">
+              <div>
+                <h3>Profil démographique</h3>
+
+                <p>
+                  Population par groupe au seuil choisi
+                </p>
+              </div>
+
+              <select
+                id="chart-range"
+                aria-label="Seuil du profil démographique"
+              ></select>
+            </div>
+
+            <div id="demographic-chart" class="bar-chart">
+              <p class="chart-empty">
+                Statistiques démographiques indisponibles.
+              </p>
+            </div>
+          </article>
         </div>
 
         <div class="table-card">
-          <div class="table-head"><div><h3>Détail par structure</h3><p id="table-caption">Aucune valeur n’est calculée tant que les données réelles ne sont pas chargées.</p></div><label class="search">⌕ <input id="search" type="search" placeholder="Rechercher…"></label></div>
-          <div class="table-scroll"><table>
-            <thead><tr><th>STRUCTURE</th><th>COORDONNÉES</th><th>CLASSE HEIGIT</th><th id="population-heading">POPULATION TOTALE ≤ SEUIL</th><th>PART NATIONALE</th></tr></thead>
-            <tbody id="facility-table"><tr class="empty"><td colspan="5">Sélectionnez un pays puis importez ou dessinez des structures.</td></tr></tbody>
-          </table></div>
+          <div class="table-head">
+            <div>
+              <h3>Détail par structure</h3>
+
+              <p id="table-caption">
+                Aucune valeur n’est calculée tant que les données réelles
+                ne sont pas chargées.
+              </p>
+            </div>
+
+            <label class="search">
+              ⌕
+
+              <input
+                id="search"
+                type="search"
+                placeholder="Rechercher…"
+              >
+            </label>
+          </div>
+
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>STRUCTURE</th>
+                  <th>COORDONNÉES</th>
+                  <th>CLASSE HEIGIT</th>
+
+                  <th id="population-heading">
+                    POPULATION TOTALE ≤ SEUIL
+                  </th>
+
+                  <th>PART NATIONALE</th>
+                </tr>
+              </thead>
+
+              <tbody id="facility-table">
+                <tr class="empty">
+                  <td colspan="5">
+                    Sélectionnez un pays puis importez ou dessinez
+                    des structures.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </section>
     </section>
 
     <section id="methodologie" class="methodology">
-      <p class="eyebrow">MÉTHODOLOGIE & LIMITES</p>
+      <p class="eyebrow">
+        MÉTHODOLOGIE & LIMITES
+      </p>
+
       <div class="method-grid">
-        <article><span>1</span><h3>Isochrones officielles</h3><p>La carte lit les tuiles vectorielles PMTiles publiées par HeiGIT. L’attribut <code>range</code> contient le seuil en secondes (600 à 7 200). Aucun cercle géométrique n’est créé.</p></article>
-        <article><span>2</span><h3>Jointure spatiale</h3><p>Le point importé est testé contre les polygones visibles. En cas de surfaces cumulatives superposées, le plus petit seuil contenant le point est retenu.</p></article>
-        <article><span>3</span><h3>Population WorldPop</h3><p>Les valeurs proviennent du Parquet OpenAccessLens, déjà calculé par HeiGIT à partir de WorldPop 100 m. Elles décrivent la population nationale accessible dans le seuil, pas une aire arbitraire autour du point.</p></article>
-        <article><span>!</span><h3>Interprétation</h3><p>Le modèle est motorisé, sans trafic temps réel. Les résultats dépendent de la complétude d’OpenStreetMap et de WorldPop. Plusieurs structures dans la même classe partagent donc la même statistique agrégée.</p></article>
+        <article>
+          <span>1</span>
+
+          <h3>Isochrones officielles</h3>
+
+          <p>
+            La carte lit les tuiles vectorielles PMTiles publiées
+            par HeiGIT. L’attribut <code>range</code> contient
+            le seuil en secondes (600 à 7 200). Aucun cercle
+            géométrique n’est créé.
+          </p>
+        </article>
+
+        <article>
+          <span>2</span>
+
+          <h3>Jointure spatiale</h3>
+
+          <p>
+            Le point importé est testé contre les polygones visibles.
+            En cas de surfaces cumulatives superposées, le plus petit
+            seuil contenant le point est retenu.
+          </p>
+        </article>
+
+        <article>
+          <span>3</span>
+
+          <h3>Population WorldPop</h3>
+
+          <p>
+            Les valeurs proviennent du Parquet OpenAccessLens,
+            déjà calculé par HeiGIT à partir de WorldPop 100 m.
+            Elles décrivent la population nationale accessible
+            dans le seuil, pas une aire arbitraire autour du point.
+          </p>
+        </article>
+
+        <article>
+          <span>!</span>
+
+          <h3>Interprétation</h3>
+
+          <p>
+            Le modèle est motorisé, sans trafic temps réel.
+            Les résultats dépendent de la complétude d’OpenStreetMap
+            et de WorldPop. Plusieurs structures dans la même classe
+            partagent donc la même statistique agrégée.
+          </p>
+        </article>
       </div>
     </section>
   </main>
 
-  <footer>Health HeiGIT Isochrone · données ouvertes HeiGIT, OpenStreetMap et WorldPop · aucun résultat simulé</footer>
+  <footer>
+    Health HeiGIT Isochrone · données ouvertes HeiGIT,
+    OpenStreetMap et WorldPop · aucun résultat simulé
+  </footer>
 
   <script src="https://unpkg.com/maplibre-gl@5.7.1/dist/maplibre-gl.js"></script>
   <script src="https://unpkg.com/pmtiles@4.3.0/dist/pmtiles.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.5.3/papaparse.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/shpjs@6.2.0/dist/shp.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.1/dist/duckdb-browser.js"></script>
+
   <script src="app.js"></script>
 </body>
 </html>
