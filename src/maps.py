@@ -54,6 +54,274 @@ def render_html_component(html: str, *, height: int = 640) -> None:
     st.iframe(f"data:text/html;base64,{encoded}", height=height)
 
 
+#: Script du composant territorial, gardé hors f-string pour éviter tout
+#: échappement d'accolades : la configuration est injectée par substitution.
+_TERRITORIAL_JS = r"""
+const CONFIG = __CONFIG__;
+
+const statusBox = document.getElementById('status');
+const detailBox = document.getElementById('detail');
+const diagnostics = [];
+let stage = 'démarrage';
+let finished = false;
+
+function log(message) {
+  diagnostics.push(message);
+  detailBox.textContent = diagnostics.join('\n');
+}
+
+function setStatus(text) {
+  statusBox.className = 'status';
+  statusBox.textContent = text;
+}
+
+function fail(title, detail) {
+  finished = true;
+  statusBox.className = 'status error';
+  statusBox.innerHTML =
+    '<strong>Données HeiGIT indisponibles</strong><br/>' + title +
+    (detail ? '<br/><small>' + detail + '</small>' : '') +
+    "<br/><small>Aucune géométrie de substitution n'est affichée.</small>" +
+    '<br/><a href="' + CONFIG.pmtiles + '" target="_blank" rel="noopener">Tester l\'archive PMTiles</a>' +
+    ' · <a href="#" id="toggle-detail">détails techniques</a>';
+  const toggle = document.getElementById('toggle-detail');
+  if (toggle) {
+    toggle.onclick = function (event) {
+      event.preventDefault();
+      detailBox.style.display = detailBox.style.display === 'block' ? 'none' : 'block';
+    };
+  }
+  log('ÉCHEC pendant : ' + stage + ' — ' + title + (detail ? ' — ' + detail : ''));
+}
+
+// Toute erreur non capturée doit s'afficher, jamais rester en « Chargement… ».
+window.addEventListener('error', function (event) {
+  if (!finished) { fail('Erreur JavaScript', event.message); }
+});
+window.addEventListener('unhandledrejection', function (event) {
+  if (!finished) { fail('Promesse rejetée', String(event.reason)); }
+});
+
+// Chien de garde : sans lui, un blocage réseau laisse le message initial à l'écran.
+setTimeout(function () {
+  if (!finished) {
+    fail('Délai de 25 s dépassé', 'Étape bloquée : ' + stage);
+  }
+}, 25000);
+
+function loadScript(urls) {
+  return new Promise(function (resolve, reject) {
+    let index = 0;
+    (function attempt() {
+      if (index >= urls.length) {
+        reject(new Error('aucun CDN joignable (' + urls.join(', ') + ')'));
+        return;
+      }
+      const url = urls[index++];
+      const element = document.createElement('script');
+      element.src = url;
+      element.onload = function () { log('script chargé : ' + url); resolve(); };
+      element.onerror = function () { log('script indisponible : ' + url); attempt(); };
+      document.head.appendChild(element);
+    })();
+  });
+}
+
+function loadStyle(urls) {
+  const element = document.createElement('link');
+  element.rel = 'stylesheet';
+  element.href = urls[0];
+  document.head.appendChild(element);
+}
+
+function waitForMapLoad(map) {
+  return new Promise(function (resolve, reject) {
+    const timer = setTimeout(function () {
+      reject(new Error("le fond de carte n'a pas fini de charger (style injoignable ?)"));
+    }, 15000);
+    map.on('load', function () { clearTimeout(timer); resolve(); });
+    map.on('error', function (event) {
+      const message = event && event.error ? event.error.message : 'erreur de carte';
+      log('maplibre: ' + message);
+    });
+  });
+}
+
+async function probeArchive(url) {
+  // Distingue explicitement 404, blocage CORS et coupure réseau : ces trois cas
+  // produisaient auparavant le même écran de chargement figé.
+  try {
+    const response = await fetch(url, { headers: { Range: 'bytes=0-16383' } });
+    log('HTTP ' + response.status + ' sur l\'archive PMTiles');
+    if (response.status === 404) {
+      throw new Error('archive introuvable (HTTP 404) — ce pays ou cette catégorie ' +
+                      "n'est peut-être pas publié par OpenAccessLens");
+    }
+    if (response.status >= 400) {
+      throw new Error('le serveur HeiGIT a répondu HTTP ' + response.status);
+    }
+    if (response.status === 200) {
+      log('avertissement : le serveur ignore les requêtes Range (téléchargement complet possible)');
+    }
+  } catch (error) {
+    if (error instanceof TypeError) {
+      throw new Error('requête bloquée par le navigateur : CORS refusé, réseau coupé ' +
+                      'ou blocage par une extension');
+    }
+    throw error;
+  }
+}
+
+function fillColour(seconds) {
+  const key = String(seconds);
+  return CONFIG.colours[key] || '#9e9e9e';
+}
+
+async function main() {
+  stage = 'chargement des bibliothèques';
+  setStatus('Chargement des bibliothèques cartographiques…');
+  loadStyle(CONFIG.cdn.maplibreCss);
+  await loadScript(CONFIG.cdn.maplibreJs);
+  await loadScript(CONFIG.cdn.pmtilesJs);
+  if (typeof maplibregl === 'undefined' || typeof pmtiles === 'undefined') {
+    throw new Error('bibliothèques MapLibre ou PMTiles absentes après chargement');
+  }
+
+  stage = "test d'accès à l'archive PMTiles";
+  setStatus('Vérification de l\'accès aux données HeiGIT…');
+  await probeArchive(CONFIG.pmtiles);
+
+  stage = 'initialisation de la carte';
+  setStatus('Initialisation de la carte…');
+  const protocol = new pmtiles.Protocol();
+  maplibregl.addProtocol('pmtiles', protocol.tile);
+
+  const map = new maplibregl.Map({
+    container: 'map',
+    style: CONFIG.style,
+    center: CONFIG.centre,
+    zoom: CONFIG.zoom,
+    attributionControl: { compact: true }
+  });
+  map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
+
+  const archive = new pmtiles.PMTiles(CONFIG.pmtiles);
+  protocol.add(archive);
+
+  await waitForMapLoad(map);
+
+  stage = 'lecture des métadonnées PMTiles';
+  setStatus('Lecture des métadonnées PMTiles…');
+  const metadata = await archive.getMetadata();
+  const header = await archive.getHeader();
+
+  const layers = (metadata && metadata.vector_layers) || [];
+  if (!layers.length) {
+    throw new Error("l'archive ne déclare aucune couche vectorielle");
+  }
+  const sourceLayer = layers[0].id;
+  log('couche vectorielle : ' + sourceLayer);
+  log('zoom disponible : ' + header.minZoom + ' → ' + header.maxZoom);
+
+  stage = 'affichage des isochrones';
+  map.addSource('access', { type: 'vector', url: 'pmtiles://' + CONFIG.pmtiles });
+
+  // Les grands `range` sont dessinés en premier : les zones rapides restent visibles.
+  const ordered = CONFIG.thresholds.slice().sort(function (a, b) { return b - a; });
+  ordered.forEach(function (seconds) {
+    map.addLayer({
+      id: 'iso-' + seconds,
+      type: 'fill',
+      source: 'access',
+      'source-layer': sourceLayer,
+      filter: ['==', ['to-number', ['get', 'range']], seconds],
+      paint: {
+        'fill-color': fillColour(seconds),
+        'fill-opacity': CONFIG.selected.indexOf(seconds) >= 0 ? 0.62 : 0,
+        'fill-outline-color': 'rgba(255,255,255,0.35)'
+      }
+    });
+  });
+
+  // Filet de sécurité : si les valeurs de `range` diffèrent de celles attendues,
+  // les couches ci-dessus restent vides. Cette couche montre alors la géométrie
+  // réelle et le diagnostic signale l'écart, plutôt que d'afficher une carte nue.
+  map.addLayer({
+    id: 'iso-inattendu',
+    type: 'fill',
+    source: 'access',
+    'source-layer': sourceLayer,
+    filter: ['!', ['in', ['to-number', ['get', 'range']], ['literal', CONFIG.thresholds]]],
+    paint: { 'fill-color': '#9e9e9e', 'fill-opacity': 0.35 }
+  });
+
+  if (header && header.minLon !== undefined && header.minLon !== header.maxLon) {
+    map.fitBounds([[header.minLon, header.minLat], [header.maxLon, header.maxLat]],
+                  { padding: 30, duration: 0 });
+  }
+
+  map.on('click', function (event) {
+    const hits = map.queryRenderedFeatures(event.point).filter(function (feature) {
+      return feature.layer.id.indexOf('iso-') === 0 &&
+             feature.properties && feature.properties.range !== undefined;
+    });
+    if (!hits.length) { return; }
+    const value = Math.min.apply(null, hits.map(function (hit) {
+      return Number(hit.properties.range);
+    }));
+    new maplibregl.Popup()
+      .setLngLat(event.lngLat)
+      .setHTML('<strong>Temps d\'accès HeiGIT</strong><br/>≤ ' + (value / 60) +
+               ' min<br/><small>range = ' + value + ' s</small>')
+      .addTo(map);
+  });
+
+  CONFIG.markers.forEach(function (marker) {
+    new maplibregl.Marker({ color: '#c1121f' })
+      .setLngLat([marker.lon, marker.lat])
+      .setPopup(new maplibregl.Popup().setHTML(
+        '<strong>' + marker.name + '</strong><br/><small>' +
+        marker.lat.toFixed(5) + ', ' + marker.lon.toFixed(5) + '</small>'))
+      .addTo(map);
+  });
+
+  map.once('idle', function () {
+    finished = true;
+    const rendered = map.queryRenderedFeatures({ layers: ['iso-inattendu'] });
+    const values = {};
+    map.querySourceFeatures('access', { sourceLayer: sourceLayer }).forEach(function (feature) {
+      if (feature.properties && feature.properties.range !== undefined) {
+        values[Number(feature.properties.range)] = true;
+      }
+    });
+    const found = Object.keys(values).map(Number).sort(function (a, b) { return a - b; });
+    log('valeurs de range trouvées : ' + (found.length ? found.join(', ') : 'aucune'));
+
+    if (!found.length) {
+      statusBox.className = 'status warn';
+      statusBox.innerHTML =
+        "<strong>Aucune entité à ce niveau de zoom</strong><br/>" +
+        "L'archive est accessible mais ne renvoie aucun polygone ici. " +
+        'Zoomez sur le pays sélectionné.';
+      return;
+    }
+    if (rendered.length) {
+      statusBox.className = 'status warn';
+      statusBox.innerHTML =
+        "<strong>Valeurs de <code>range</code> inattendues</strong><br/>" +
+        'Trouvé : ' + found.join(', ') + ' s. Ces polygones sont affichés en gris.';
+      return;
+    }
+    statusBox.remove();
+  });
+}
+
+main().catch(function (error) {
+  if (!finished) { fail(error.message || String(error)); }
+});
+"""
+
+
 def territorial_map_html(
     iso3: str,
     category: str,
@@ -68,19 +336,18 @@ def territorial_map_html(
 
     Le nom de la couche vectorielle est **lu dans les métadonnées du PMTiles**
     plutôt que supposé, comme le fait l'application officielle.
+
+    Le composant est auto-diagnostiquant : chargement des bibliothèques (avec
+    CDN de secours), test d'accès à l'archive, initialisation de la carte,
+    lecture des métadonnées et rendu sont des étapes distinctes. Toute erreur,
+    tout blocage réseau et tout dépassement de délai affichent la cause précise
+    au lieu de laisser un message de chargement figé.
     """
     url = pmtiles_url(iso3, category)
     selected = sorted(int(value) for value in selected_seconds)
 
-    colours = {
-        str(seconds): color_for_threshold(seconds) for seconds in THRESHOLDS_SECONDS
-    }
     markers = [
-        {
-            "name": facility.name,
-            "lon": facility.longitude,
-            "lat": facility.latitude,
-        }
+        {"name": facility.name, "lon": facility.longitude, "lat": facility.latitude}
         for facility in facilities
     ]
 
@@ -105,133 +372,65 @@ def territorial_map_html(
             "pmtiles": url,
             "style": BASEMAP_STYLE,
             "selected": selected,
-            "colours": colours,
+            "thresholds": [int(value) for value in THRESHOLDS_SECONDS],
+            "colours": {
+                str(seconds): color_for_threshold(seconds) for seconds in THRESHOLDS_SECONDS
+            },
             "markers": markers,
             "centre": list(centre),
             "zoom": zoom,
+            "cdn": {
+                "maplibreJs": [
+                    "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js",
+                    "https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js",
+                ],
+                "maplibreCss": [
+                    "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css",
+                    "https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css",
+                ],
+                "pmtilesJs": [
+                    "https://unpkg.com/pmtiles@3.2.0/dist/pmtiles.js",
+                    "https://cdn.jsdelivr.net/npm/pmtiles@3.2.0/dist/pmtiles.js",
+                ],
+            },
         }
     )
 
-    return f"""
-<!DOCTYPE html>
+    script = _TERRITORIAL_JS.replace("__CONFIG__", payload)
+    title = HEALTH_CATEGORIES.get(category, category)
+
+    return f"""<!DOCTYPE html>
 <html lang="fr">
 <head>
 <meta charset="utf-8" />
-<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
-<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
-<script src="https://unpkg.com/pmtiles@3.2.0/dist/pmtiles.js"></script>
 <style>
   html, body {{ margin:0; padding:0; height:100%; font-family: system-ui, sans-serif; }}
-  #map {{ position:absolute; inset:0; }}
+  #map {{ position:absolute; inset:0; background:#e9edf0; }}
   .panel {{ position:absolute; bottom:18px; left:12px; z-index:2; background:rgba(255,255,255,.94);
            border-radius:8px; padding:10px 12px; font-size:12px; box-shadow:0 1px 6px rgba(0,0,0,.25);
            max-height:52%; overflow:auto; }}
   .panel h4 {{ margin:0 0 6px; font-size:12px; }}
   .row {{ display:flex; align-items:center; gap:7px; line-height:1.7; }}
   .swatch {{ width:15px; height:11px; border-radius:2px; display:inline-block; }}
-  .status {{ position:absolute; top:12px; left:12px; z-index:3; background:#fff; padding:8px 12px;
-             border-radius:6px; font-size:12px; box-shadow:0 1px 6px rgba(0,0,0,.2); max-width:70%; }}
+  .status {{ position:absolute; top:12px; left:12px; right:12px; z-index:3; background:#fff;
+             padding:9px 13px; border-radius:6px; font-size:12px; line-height:1.5;
+             box-shadow:0 1px 6px rgba(0,0,0,.2); max-width:640px; }}
   .status.error {{ background:#fdecec; color:#8a1c1c; }}
+  .status.warn {{ background:#fff8e6; color:#7a5c00; }}
+  .status a {{ color:inherit; }}
+  #detail {{ position:absolute; bottom:12px; right:12px; z-index:3; display:none; max-width:52%;
+             max-height:42%; overflow:auto; background:#101418; color:#d7e0e6; font-size:11px;
+             font-family:ui-monospace, monospace; white-space:pre-wrap; padding:9px 11px;
+             border-radius:6px; }}
 </style>
 </head>
 <body>
 <div id="map"></div>
-<div class="panel"><h4>Temps d'accès — {HEALTH_CATEGORIES.get(category, category)}</h4>{legend_rows}</div>
+<div class="panel"><h4>Temps d'accès — {title}</h4>{legend_rows}</div>
 <div class="status" id="status">Chargement des PMTiles HeiGIT…</div>
+<pre id="detail"></pre>
 <script>
-const CONFIG = {payload};
-const statusBox = document.getElementById('status');
-
-const protocol = new pmtiles.Protocol();
-maplibregl.addProtocol('pmtiles', protocol.tile);
-
-const map = new maplibregl.Map({{
-  container: 'map',
-  style: CONFIG.style,
-  center: CONFIG.centre,
-  zoom: CONFIG.zoom,
-  attributionControl: {{ compact: true }}
-}});
-map.addControl(new maplibregl.NavigationControl({{ showCompass: false }}), 'top-right');
-
-function fillColourExpression() {{
-  // Une couleur par valeur exacte de `range` (secondes). Les seuils non
-  // sélectionnés sont rendus transparents plutôt que supprimés, afin de
-  // conserver l'ordre d'empilement des surfaces cumulatives.
-  const expression = ['match', ['to-number', ['get', 'range']]];
-  Object.keys(CONFIG.colours).forEach(function (key) {{
-    const seconds = parseInt(key, 10);
-    expression.push(seconds);
-    expression.push(CONFIG.selected.indexOf(seconds) >= 0 ? CONFIG.colours[key] : 'rgba(0,0,0,0)');
-  }});
-  expression.push('rgba(0,0,0,0)');
-  return expression;
-}}
-
-map.on('load', async function () {{
-  try {{
-    const archive = new pmtiles.PMTiles(CONFIG.pmtiles);
-    protocol.add(archive);
-    const metadata = await archive.getMetadata();
-    const layers = metadata.vector_layers || [];
-    if (!layers.length) {{ throw new Error('Aucune couche vectorielle dans le PMTiles'); }}
-    const sourceLayer = layers[0].id;
-    const header = await archive.getHeader();
-
-    map.addSource('access', {{ type: 'vector', url: 'pmtiles://' + CONFIG.pmtiles }});
-
-    // Les grands `range` sont dessinés en premier : les zones rapides restent visibles.
-    const ordered = Object.keys(CONFIG.colours).map(Number).sort(function (a, b) {{ return b - a; }});
-    ordered.forEach(function (seconds) {{
-      map.addLayer({{
-        id: 'iso-' + seconds,
-        type: 'fill',
-        source: 'access',
-        'source-layer': sourceLayer,
-        filter: ['==', ['to-number', ['get', 'range']], seconds],
-        paint: {{
-          'fill-color': CONFIG.colours[String(seconds)],
-          'fill-opacity': CONFIG.selected.indexOf(seconds) >= 0 ? 0.62 : 0,
-          'fill-outline-color': 'rgba(255,255,255,0.35)'
-        }}
-      }});
-    }});
-
-    if (header && header.minLon !== undefined) {{
-      map.fitBounds([[header.minLon, header.minLat], [header.maxLon, header.maxLat]], {{
-        padding: 30, duration: 0
-      }});
-    }}
-
-    map.on('click', function (event) {{
-      const hits = map.queryRenderedFeatures(event.point).filter(function (feature) {{
-        return feature.layer.id.indexOf('iso-') === 0 && feature.properties.range !== undefined;
-      }});
-      if (!hits.length) {{ return; }}
-      const value = Math.min.apply(null, hits.map(function (h) {{ return Number(h.properties.range); }}));
-      new maplibregl.Popup()
-        .setLngLat(event.lngLat)
-        .setHTML('<strong>Temps d\\'accès HeiGIT</strong><br/>≤ ' + (value / 60) +
-                 ' min<br/><small>range = ' + value + ' s</small>')
-        .addTo(map);
-    }});
-
-    statusBox.remove();
-  }} catch (error) {{
-    statusBox.className = 'status error';
-    statusBox.textContent = 'Données HeiGIT indisponibles : ' + error.message +
-      '. Aucune géométrie de substitution n\\'est affichée.';
-  }}
-}});
-
-CONFIG.markers.forEach(function (marker) {{
-  new maplibregl.Marker({{ color: '#c1121f' }})
-    .setLngLat([marker.lon, marker.lat])
-    .setPopup(new maplibregl.Popup().setHTML(
-      '<strong>' + marker.name + '</strong><br/><small>' +
-      marker.lat.toFixed(5) + ', ' + marker.lon.toFixed(5) + '</small>'))
-    .addTo(map);
-}});
+{script}
 </script>
 </body>
 </html>
