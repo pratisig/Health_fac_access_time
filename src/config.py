@@ -74,9 +74,6 @@ FACILITY_COLORS: Final[tuple[str, ...]] = (
     "#9a6324",
 )
 
-BASEMAP_STYLE: Final[str] = "https://tiles.openfreemap.org/styles/positron"
-
-
 def color_for_threshold(seconds: int) -> str:
     """Couleur officielle associée à un seuil, en secondes."""
     try:
@@ -117,11 +114,23 @@ ORS_PUBLIC_MAX_INTERVALS: Final[int] = 10
 #: Nombre maximal de localisations par requête isochrone sur l'API publique.
 ORS_PUBLIC_MAX_LOCATIONS: Final[int] = 5
 
-#: Profils de déplacement proposés dans l'interface.
+#: Profils de déplacement proposés dans l'interface. Les clés sont les noms ORS ;
+#: le client Valhalla les traduit respectivement en ``auto`` et ``pedestrian``.
 TRAVEL_PROFILES: Final[dict[str, str]] = {
     "driving-car": "Voiture",
     "foot-walking": "Marche",
 }
+
+# --------------------------------------------------------------------------- #
+# Valhalla / serveur de démonstration FOSSGIS                                 #
+# --------------------------------------------------------------------------- #
+
+#: Endpoint public mondial, sans clé, documenté par le projet Valhalla.
+VALHALLA_FOSSGIS_URL: Final[str] = "https://valhalla1.openstreetmap.de/isochrone"
+
+#: Limites renvoyées par le serveur (151 = temps, 152 = nombre de contours).
+VALHALLA_FOSSGIS_MAX_RANGE_SECONDS: Final[int] = 120 * 60
+VALHALLA_FOSSGIS_MAX_CONTOURS: Final[int] = 4
 
 # --------------------------------------------------------------------------- #
 # WorldPop                                                                     #
@@ -221,6 +230,17 @@ def ors_base_url() -> str:
 def ors_is_public_instance() -> bool:
     """Vrai si l'application cible l'API publique HeiGIT."""
     return ors_base_url().rstrip("/") == ORS_PUBLIC_BASE_URL
+
+
+def valhalla_base_url() -> str:
+    """Endpoint Valhalla, surchargeable pour une instance dédiée compatible."""
+    return (get_secret("VALHALLA_BASE_URL") or VALHALLA_FOSSGIS_URL).rstrip("/")
+
+
+def valhalla_is_enabled() -> bool:
+    """Vrai par défaut ; ``VALHALLA_ENABLED=false`` désactive le serveur public."""
+    value = (get_secret("VALHALLA_ENABLED", "true") or "true").strip().lower()
+    return value not in {"0", "false", "no", "non", "off"}
 
 
 # --------------------------------------------------------------------------- #
