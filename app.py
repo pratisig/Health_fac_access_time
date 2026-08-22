@@ -37,8 +37,6 @@ from src.config import (
     TRAVEL_PROFILES,
     WGS84,
     ors_api_key,
-    ors_base_url,
-    ors_is_public_instance,
 )
 from src.data_catalog import (
     CatalogError,
@@ -67,7 +65,12 @@ from src.population import (
     raster_total,
     resolve_worldpop_url,
 )
-from src.routing import ORSClient, RoutingError, public_capabilities
+from src.routing import (
+    RoutingCapabilities,
+    RoutingError,
+    available_routing_engines,
+    create_routing_client,
+)
 from src.spatial_analysis import (
     MATRIX_METRICS,
     attach_population,
@@ -162,6 +165,7 @@ mode = st.sidebar.radio(
         "Le mode 1 lit les données nationales déjà publiées par HeiGIT. "
         "Le mode 2 calcule de nouvelles isochrones autour de vos structures."
     ),
+    key="analysis_mode",
 )
 IS_MODE_2 = mode.startswith("Mode 2")
 
@@ -209,9 +213,9 @@ if "selected_minutes" not in st.session_state:
     st.session_state.selected_minutes = list(THRESHOLDS_MINUTES)
 
 button_all, button_none = st.sidebar.columns(2)
-if button_all.button("Tout sélectionner", use_container_width=True):
+if button_all.button("Tout sélectionner", width="stretch"):
     st.session_state.selected_minutes = list(THRESHOLDS_MINUTES)
-if button_none.button("Tout désélectionner", use_container_width=True):
+if button_none.button("Tout désélectionner", width="stretch"):
     st.session_state.selected_minutes = []
 
 selected_minutes = st.sidebar.multiselect(
@@ -249,7 +253,7 @@ year = st.sidebar.selectbox(
     index=0,
 )
 
-load_population = st.sidebar.button("Charger le raster WorldPop", use_container_width=True)
+load_population = st.sidebar.button("Charger le raster WorldPop", width="stretch")
 
 if load_population:
     try:
@@ -309,6 +313,10 @@ else:
 
 # -- Routage ---------------------------------------------------------------- #
 
+routing_engine_key: str | None = None
+capabilities: RoutingCapabilities | None = None
+routing_engines: dict[str, RoutingCapabilities] = {}
+
 if IS_MODE_2:
     st.sidebar.divider()
     st.sidebar.subheader("Moteur de routage")
@@ -319,21 +327,56 @@ if IS_MODE_2:
         format_func=lambda key: TRAVEL_PROFILES[key],
     )
 
-    capabilities = public_capabilities() if ors_is_public_instance() else None
-    if ors_is_public_instance():
-        limit = public_capabilities().max_range_for(profile)
-        st.sidebar.caption(f"Instance : API publique openrouteservice ({ors_base_url()})")
-        if limit:
+    routing_engines = available_routing_engines()
+
+    def _engine_label(key: str) -> str:
+        item = routing_engines[key]
+        limit = item.max_range_for(profile)
+        maximum = f"{limit // 60} min max" if limit is not None else "seuil configurable"
+        key_status = "clé requise" if item.api_key_required else "sans clé"
+        return (
+            f"{'Valhalla FOSSGIS' if key == 'valhalla' else 'openrouteservice'} — "
+            f"{key_status} · {maximum} · {item.max_contours} contours/requête"
+        )
+
+    if routing_engines:
+        routing_engine_key = st.sidebar.selectbox(
+            "Backend d'isochrones",
+            options=list(routing_engines),
+            format_func=_engine_label,
+            help=(
+                "Valhalla est activé par défaut sans secret. openrouteservice "
+                "n'apparaît que si ORS_API_KEY est configurée."
+            ),
+        )
+        capabilities = routing_engines[routing_engine_key]
+        st.sidebar.caption(
+            f"Endpoint : {capabilities.base_url}  \n"
+            f"Temps transmis en {capabilities.time_unit} · sens : vers la structure "
+            f"({capabilities.direction_parameter}={capabilities.direction_value})."
+        )
+        limit = capabilities.max_range_for(profile)
+        if limit is not None and any(value > limit for value in selected_seconds):
             st.sidebar.warning(
                 f"Portée maximale pour « {TRAVEL_PROFILES[profile]} » : {limit // 60} min. "
-                "Les seuils supérieurs ne seront pas calculés et seront listés comme tels."
+                "Les seuils supérieurs resteront vides avec leur motif."
+            )
+        if routing_engine_key == "valhalla":
+            st.sidebar.warning(
+                "**Serveur de démonstration FOSSGIS mutualisé.** Lancez de petits "
+                "lots, n'enchaînez pas les recalculs et laissez le cache réutiliser "
+                "les réponses. Pour un usage intensif, déployez Valhalla vous-même."
             )
     else:
-        st.sidebar.caption(f"Instance dédiée : {ors_base_url()}")
-        st.sidebar.success("Aucune limite de portée présumée sur une instance auto-hébergée.")
+        st.sidebar.error(
+            "Aucun moteur de routage utilisable : Valhalla est désactivé et aucune "
+            "clé ORS_API_KEY n'est configurée. Le lancement de l'analyse est bloqué."
+        )
 
-    if not ors_api_key() and ors_is_public_instance():
-        st.sidebar.error("Secret ORS_API_KEY absent : le calcul d'isochrones est désactivé.")
+    if not ors_api_key():
+        st.sidebar.caption(
+            "openrouteservice indisponible dans le sélecteur : ORS_API_KEY absente."
+        )
 else:
     profile = "driving-car"
 
@@ -421,10 +464,10 @@ def render_territorial_mode() -> None:
                     "population_share": "part (%)",
                 }
             )
-            st.dataframe(display, use_container_width=True, hide_index=True)
+            st.dataframe(display, width="stretch", hide_index=True)
             st.plotly_chart(
                 charts.territorial_stats_chart(national, population_type),
-                use_container_width=True,
+                width="stretch",
             )
             st.download_button(
                 "⬇️ Statistiques territoriales (CSV)",
@@ -586,7 +629,7 @@ def render_facility_manager() -> None:
         )
         edited = st.data_editor(
             frame,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             num_rows="fixed",
             column_config={
@@ -623,7 +666,7 @@ def render_facility_manager() -> None:
             reset_results()
             st.rerun()
 
-        if clear_column.button("Tout effacer", use_container_width=True):
+        if clear_column.button("Tout effacer", width="stretch"):
             st.session_state.facilities = []
             reset_results()
             st.rerun()
@@ -645,7 +688,14 @@ def selected_facilities() -> list[Facility]:
 
 def run_analysis(targets: Sequence[Facility]) -> None:
     """Lance le calcul complet : isochrones, population, agrégations."""
-    client = ORSClient(location_type="destination")
+    if routing_engine_key is None:
+        st.error("Aucun moteur de routage utilisable : l'analyse ne peut pas démarrer.")
+        return
+    # Le point d'injection privé permet à AppTest de couvrir le parcours complet
+    # sans accès réseau. En production, le client est toujours créé ici.
+    client = st.session_state.get("_routing_client") or create_routing_client(
+        routing_engine_key
+    )
 
     progress = st.progress(0.0, text="Préparation…")
     log = st.empty()
@@ -734,8 +784,8 @@ def run_analysis(targets: Sequence[Facility]) -> None:
 def render_catchment_mode() -> None:
     st.title("Mode 2 — Zone de desserte propre à chaque structure")
     st.caption(
-        "Chaque structure devient le centre de ses propres isochrones routières "
-        "cumulatives : zone ≤ 10 min ⊂ ≤ 20 min ⊂ … ⊂ ≤ 120 min."
+        "Chaque structure devient la destination de ses propres isochrones routières "
+        "cumulatives. Les couronnes utilisent les seuils réellement sélectionnés."
     )
 
     render_facility_manager()
@@ -756,25 +806,38 @@ def render_catchment_mode() -> None:
                 "mémoire disponible. Réduisez la sélection ou traitez par lots."
             )
         else:
-            requests_count = len(targets) * max(1, -(-len(selected_seconds) // 10))
+            contours_per_request = capabilities.max_contours if capabilities else 1
+            requests_count = len(targets) * max(
+                1, -(-len(selected_seconds) // contours_per_request)
+            )
             st.write(
                 f"**{len(targets)}** structure(s) × **{len(selected_seconds)}** seuil(s) "
                 f"≈ **{requests_count}** requête(s) au moteur de routage "
                 "(les résultats déjà en cache ne sont pas recalculés)."
             )
-            if ors_is_public_instance():
-                unsupported = public_capabilities().unsupported(profile, selected_seconds)
+            if capabilities is not None:
+                unsupported = capabilities.unsupported(profile, selected_seconds)
                 if unsupported:
                     st.warning(
-                        "Seuils hors capacité de l'API publique et donc **non calculés** : "
+                        "Seuils hors capacité du moteur et donc **non calculés** : "
                         + ", ".join(f"{value // 60} min" for value in unsupported)
                         + ". Aucune géométrie de substitution ne sera produite."
                     )
+            if routing_engine_key is None:
+                st.error(
+                    "Aucun moteur de routage utilisable. Activez Valhalla ou "
+                    "configurez ORS_API_KEY ; aucune analyse silencieuse ne sera lancée."
+                )
 
     with right:
-        can_run = bool(targets) and bool(selected_seconds) and len(targets) <= MAX_FACILITIES
+        can_run = (
+            bool(targets)
+            and bool(selected_seconds)
+            and len(targets) <= MAX_FACILITIES
+            and routing_engine_key is not None
+        )
         if st.button("▶️ Lancer l'analyse", type="primary", disabled=not can_run,
-                     use_container_width=True):
+                     width="stretch"):
             try:
                 run_analysis(targets)
             except Exception as error:  # noqa: BLE001
@@ -782,7 +845,7 @@ def render_catchment_mode() -> None:
                 with st.expander("Détail technique"):
                     st.code(traceback.format_exc())
         if st.session_state.results is not None and st.button(
-            "Effacer les résultats", use_container_width=True
+            "Effacer les résultats", width="stretch"
         ):
             reset_results()
             st.rerun()
@@ -890,14 +953,14 @@ def render_results() -> None:
     with table_tab:
         layout = st.radio("Format", ["Long", "Matrice"], horizontal=True)
         if layout == "Long":
-            st.dataframe(visible, use_container_width=True, hide_index=True)
+            st.dataframe(visible, width="stretch", hide_index=True)
         else:
             metric = st.selectbox(
                 "Métrique", options=list(MATRIX_METRICS),
                 format_func=lambda key: MATRIX_METRICS[key],
             )
             st.dataframe(
-                matrix_table(visible, metric), use_container_width=True, hide_index=True
+                matrix_table(visible, metric), width="stretch", hide_index=True
             )
             st.caption(
                 "Rappel : les colonnes « population cumulée » ne s'additionnent pas "
@@ -905,20 +968,20 @@ def render_results() -> None:
             )
 
         st.markdown("**Couverture combinée (sans double comptage)**")
-        st.dataframe(coverage, use_container_width=True, hide_index=True)
+        st.dataframe(coverage, width="stretch", hide_index=True)
 
     with chart_tab:
-        st.plotly_chart(charts.cumulative_curve(visible), use_container_width=True)
-        st.plotly_chart(charts.interval_histogram(visible), use_container_width=True)
-        st.plotly_chart(charts.coverage_chart(coverage), use_container_width=True)
-        st.plotly_chart(charts.area_chart(visible), use_container_width=True)
+        st.plotly_chart(charts.cumulative_curve(visible), width="stretch")
+        st.plotly_chart(charts.interval_histogram(visible), width="stretch")
+        st.plotly_chart(charts.coverage_chart(coverage), width="stretch")
+        st.plotly_chart(charts.area_chart(visible), width="stretch")
 
         if not visible.empty:
             names = sorted(visible["structure"].unique())
             chosen = st.selectbox("Détail d'une structure", names)
             st.plotly_chart(
                 charts.cumulative_versus_interval(visible, chosen),
-                use_container_width=True,
+                width="stretch",
             )
             if len(names) > 1:
                 threshold = st.select_slider(
@@ -928,7 +991,7 @@ def render_results() -> None:
                 )
                 st.plotly_chart(
                     charts.facility_comparison(visible, threshold),
-                    use_container_width=True,
+                    width="stretch",
                 )
 
     with export_tab:
@@ -944,7 +1007,7 @@ def render_results() -> None:
             data=exports.long_csv(visible, metadata),
             file_name=exports.filename("acces_long", "csv"),
             mime="text/csv",
-            use_container_width=True,
+            width="stretch",
         )
         metric = first.selectbox(
             "Métrique de la matrice", options=list(MATRIX_METRICS),
@@ -955,14 +1018,14 @@ def render_results() -> None:
             data=exports.matrix_csv(visible, metadata, metric),
             file_name=exports.filename(f"acces_matrice_{metric}", "csv"),
             mime="text/csv",
-            use_container_width=True,
+            width="stretch",
         )
         first.download_button(
             "⬇️ Métadonnées (JSON)",
             data=exports.metadata_json(metadata, {"indicateurs": indicators}),
             file_name=exports.filename("metadonnees", "json"),
             mime="application/json",
-            use_container_width=True,
+            width="stretch",
         )
 
         second.download_button(
@@ -970,16 +1033,16 @@ def render_results() -> None:
             data=exports.isochrones_geojson(results, metadata, geometry="cumulative"),
             file_name=exports.filename("isochrones_cumulees", "geojson"),
             mime="application/geo+json",
-            use_container_width=True,
+            width="stretch",
         )
         second.download_button(
             "⬇️ GeoJSON — couronnes",
             data=exports.isochrones_geojson(results, metadata, geometry="ring"),
             file_name=exports.filename("couronnes", "geojson"),
             mime="application/geo+json",
-            use_container_width=True,
+            width="stretch",
         )
-        if second.button("Préparer le GeoPackage", use_container_width=True):
+        if second.button("Préparer le GeoPackage", width="stretch"):
             try:
                 payload = exports.isochrones_geopackage(
                     results, metadata, long_frame=visible
@@ -989,7 +1052,7 @@ def render_results() -> None:
                     data=payload,
                     file_name=exports.filename("isochrones", "gpkg"),
                     mime="application/geopackage+sqlite3",
-                    use_container_width=True,
+                    width="stretch",
                 )
             except Exception as error:  # noqa: BLE001
                 second.error(f"GeoPackage indisponible : {error}")
@@ -1001,7 +1064,7 @@ def render_results() -> None:
             ),
             file_name=exports.filename("rapport", "html"),
             mime="text/html",
-            use_container_width=True,
+            width="stretch",
         )
 
 
@@ -1019,7 +1082,7 @@ with st.sidebar.expander("Limites du modèle", expanded=False):
         st.caption(f"• {warning}")
 
 st.sidebar.caption(
-    "Isochrones : openrouteservice / OpenStreetMap (ODbL) — "
+    "Isochrones : Valhalla FOSSGIS ou openrouteservice / OpenStreetMap (ODbL) — "
     "Population : WorldPop (CC BY 4.0) — "
     "Accessibilité territoriale : HeiGIT OpenAccessLens."
 )

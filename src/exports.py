@@ -299,9 +299,10 @@ pour une même structure ; les valeurs cumulées ne le sont pas.</p>
 <div class="warn"><ul>{warnings_html}</ul></div>
 
 <footer>
-Isochrones : openrouteservice sur données OpenStreetMap (ODbL).
-Population : WorldPop (CC BY 4.0). Accessibilité territoriale : HeiGIT OpenAccessLens.
-Document généré automatiquement — aucune valeur n'y est simulée ni extrapolée.
+Isochrones : {metadata.routing_engine} ({metadata.routing_base_url}) sur données
+OpenStreetMap (ODbL). Population : WorldPop (CC BY 4.0). Accessibilité
+territoriale : HeiGIT OpenAccessLens. Document généré automatiquement — aucune
+valeur n'y est simulée ni extrapolée.
 </footer>
 </body></html>
 """.encode("utf-8")

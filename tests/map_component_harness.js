@@ -89,7 +89,11 @@ function fakeMaplibre(options) {
     Popup: function () {
       return { setLngLat() { return this; }, setHTML() { return this; }, addTo() { return this; } };
     },
-    Map: function () {
+    Map: function (config) {
+      if (options.requireInlineStyle &&
+          (!config || typeof config.style !== 'object' || config.style.version !== 8)) {
+        throw new Error('le style dépend encore d’un document distant');
+      }
       const handlers = {};
       const map = {
         on(event, handler) { handlers[event] = handler; if (event === 'load' && options.styleLoads) setImmediate(handler); },
@@ -129,6 +133,20 @@ const scenarios = [
     },
     expect: (status) => status.removed,
     describe: 'le bandeau disparaît',
+  },
+  {
+    name: 'style local sans document distant',
+    options: {
+      fetch: async () => ({ status: 206 }),
+      maplibregl: fakeMaplibre({
+        styleLoads: true,
+        features: [600, 1200, 1800],
+        requireInlineStyle: true,
+      }),
+      pmtiles: fakePmtiles({ metadata: okMetadata }),
+    },
+    expect: (status) => status.removed,
+    describe: 'buildStyle autonome accepté',
   },
   {
     name: 'CDN injoignable',

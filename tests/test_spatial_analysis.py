@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 import pytest
 import rasterio
 from rasterio.transform import from_origin
@@ -318,6 +319,25 @@ def test_tableau_long(raster):
         assert column in frame.columns
 
 
+def test_bornes_reelles_des_intervalles_sont_propagees(raster):
+    a = make_result(
+        "A",
+        {
+            600: (0.0, 0.9, 0.04, 1.0),
+            1800: (0.0, 0.9, 0.10, 1.0),
+            3600: (0.0, 0.9, 0.18, 1.0),
+        },
+    )
+    attach_population([a], raster)
+    frame = long_table([a])
+
+    assert list(frame["seuil_precedent_min"]) == [0, 10, 30]
+    matrix = matrix_table(frame, "population_intervalle")
+    assert list(matrix.columns) == [
+        "structure", "0–10 min", "10–30 min", "30–60 min"
+    ]
+
+
 def test_tableau_matrice(raster):
     a = make_result("A", {600: (0.0, 0.9, 0.05, 1.0), 1200: (0.0, 0.9, 0.1, 1.0)}, identifier="a")
     b = make_result("B", {600: (0.0, 0.9, 0.05, 1.0)}, identifier="b")
@@ -341,6 +361,25 @@ def test_matrice_colonnes_triees_numeriquement(raster):
 
 def test_matrice_vide_si_metrique_absente():
     assert matrix_table(long_table([]), "population_cumulee").empty
+
+
+def test_indicateurs_acceptent_un_index_non_contigu():
+    """Régression : le label d'idxmax ne doit jamais être passé à iloc."""
+    coverage = pd.DataFrame(
+        {
+            "seuil_min": [10, 30],
+            "population_union": [100.0, 250.0],
+            "superficie_union_km2": [2.0, 7.0],
+            "population_chevauchement": [0.0, 20.0],
+        },
+        index=[4, 11],
+    )
+
+    indicators = summary_indicators([], coverage)
+
+    assert indicators["seuil_max_min"] == 30
+    assert indicators["population_couverte_max"] == 250.0
+    assert indicators["superficie_couverte_max_km2"] == 7.0
 
 
 def test_indicateurs_de_synthese(raster):

@@ -46,11 +46,12 @@ quelles, et les statistiques sont lues sans correction.
 
 > « Combien de personnes peuvent atteindre cette structure précise en 10, 20 … 120 minutes ? »
 
-Chaque structure importée ou dessinée devient **le centre de ses propres
-isochrones**, calculées par openrouteservice sur OpenStreetMap, puis croisées
-avec WorldPop. Pour chaque structure et chaque seuil : géométrie réelle, temps
-en secondes et en minutes, population cumulée, population de la couronne,
-superficie, part de la population de référence.
+Chaque structure importée ou dessinée devient **la destination de ses propres
+isochrones**, calculées par Valhalla (par défaut, sans clé) ou openrouteservice
+(si `ORS_API_KEY` existe) sur OpenStreetMap, puis croisées avec WorldPop. Pour
+chaque structure et chaque seuil : géométrie réelle, temps en secondes et en
+minutes, borne précédente réelle de la couronne, population cumulée, population
+de la couronne, superficie et part de la population de référence.
 
 L'emboîtement est garanti par construction :
 
@@ -58,8 +59,14 @@ L'emboîtement est garanti par construction :
 zone ≤ 10 ⊂ zone ≤ 20 ⊂ zone ≤ 30 ⊂ … ⊂ zone ≤ 120
 ```
 
-Le sens du calcul est `location_type = destination` : les zones représentent
-bien les lieux **depuis lesquels on atteint** la structure, et non l'inverse.
+Les zones représentent les lieux **depuis lesquels on atteint** la structure,
+et non l'inverse. Ce sens est transmis explicitement : `reverse: true` pour
+Valhalla et `location_type: destination` pour ORS. `reverse` est documenté par
+[l'API Valhalla](https://valhalla.github.io/valhalla/api/isochrone/api-reference/)
+comme une expansion inverse montrant d'où la localisation peut être atteinte.
+Si un serveur compatible refuse ce paramètre, l'erreur est affichée pour les
+seuils concernés : l'application ne bascule jamais silencieusement dans le sens
+opposé.
 
 ---
 
@@ -85,7 +92,10 @@ population_20_30  = population_cumulee_30 − population_cumulee_20
 
 `check_consistency()` contrôle à chaque exécution la croissance du cumul, la
 positivité des couronnes et l'égalité `Σ couronnes = cumul final`, et affiche
-tout écart plutôt que de le masquer.
+tout écart plutôt que de le masquer. Si les seuils choisis sont par exemple
+10, 30 et 60 minutes, les intervalles sont libellés **0–10, 10–30 et 30–60**
+dans les graphiques, cartes, tableaux, CSV, GeoJSON, GeoPackage et rapport HTML
+(`seuil_precedent_min`) : aucun pas fixe de dix minutes n'est inventé.
 
 ### Plusieurs structures : jamais de double comptage
 
@@ -146,16 +156,58 @@ chaque pixel, calculée en fonction de la latitude.
 
 ---
 
-## Moteur d'isochrones : choix et limites réelles
+## Moteurs d’isochrones : Valhalla par défaut, ORS en option
 
-**openrouteservice est retenu**, pour une raison de fond : c'est le moteur avec
-lequel HeiGIT a produit OpenAccessLens. Les zones du mode 2 sont donc
-méthodologiquement comparables aux isochrones territoriales du mode 1 —
-avantage qu'aucune autre solution (Valhalla, GraphHopper, OSRM) ne procure ici.
+### Valhalla FOSSGIS — chemin principal sans clé
 
-### ⚠️ L'API publique ne permet pas les douze seuils
+Le mode 2 fonctionne par défaut, sans secret, avec le serveur de démonstration
+mondial FOSSGIS :
 
-D'après [openrouteservice.org/restrictions](https://openrouteservice.org/restrictions/) :
+```
+https://valhalla1.openstreetmap.de/isochrone
+```
+
+Le client applique exactement le protocole Valhalla :
+
+* `POST` avec `locations: [{"lat": …, "lon": …}]` ;
+* profils applicatifs `driving-car` → `costing: "auto"` et `foot-walking` →
+  `costing: "pedestrian"` ;
+* temps internes convertis de secondes vers `contours[].time` en minutes ;
+* `polygons: true` et `reverse: true` ;
+* réponse `properties.contour` reconvertie de minutes vers secondes ;
+* quatre contours maximum par appel : les douze seuils sont découpés en
+  **trois requêtes de quatre**, puis recombinés ;
+* limite explicite à 120 minutes. Un seuil supérieur est refusé avant l'appel,
+  sans cercle, tampon ou extrapolation.
+
+Le serveur FOSSGIS est une **démonstration mutualisée**, pas une infrastructure
+de calcul en masse. L'application respecte sa politique d'usage équitable :
+requêtes espacées de 1,6 s, `User-Agent` identifiant le projet, cache disque
+agressif indexé par la charge utile complète et réutilisé sans expiration. Dans
+l'interface, un avertissement demande de traiter de petits lots et d'éviter les
+recalculs. Pour un usage intensif ou concurrent, déployer sa propre instance
+Valhalla et renseigner `VALHALLA_BASE_URL`.
+
+Les erreurs sont conservées par seuil avec un message exploitable :
+
+| Réponse | Signification et conduite |
+|---|---|
+| Valhalla `151` | contour au-delà de 120 min : refus sans extrapolation |
+| Valhalla `152` | trop de contours : le client normal en envoie au plus quatre |
+| HTTP `429` | serveur mutualisé limité/saturé : attendre, réduire le lot, laisser agir le cache |
+| JSON/géométrie absente | seuil laissé vide avec son motif |
+
+`VALHALLA_ENABLED=false` permet à un exploitant de désactiver ce backend. Si
+Valhalla est désactivé et qu'aucune configuration ORS utilisable n'existe, le
+bouton d'analyse est désactivé avec un message explicite.
+
+### openrouteservice — option avec clé
+
+openrouteservice n'apparaît dans le sélecteur que si `ORS_API_KEY` est définie.
+Il reste utile pour comparer le mode 2 au moteur employé par HeiGIT pour
+OpenAccessLens, ou pour cibler une instance dédiée via `ORS_BASE_URL`.
+
+L'API publique ORS impose notamment :
 
 | Option | Maximum public |
 |---|---|
@@ -164,49 +216,35 @@ D'après [openrouteservice.org/restrictions](https://openrouteservice.org/restri
 | **Portée temps, profils motorisés** | **1 h** |
 | Portée temps, profils piétons | 20 h |
 
-Conséquences concrètes, **traitées explicitement** par l'application :
+En voiture, les seuils 70 à 120 minutes sont donc refusés en amont avec leur
+motif sur l'API publique ; en marche, les douze passent. Les douze contours sont
+découpés en deux appels (10 + 2). `total_pop` d'ORS n'est jamais utilisé : les
+populations viennent exclusivement des sommes zonales WorldPop.
 
-1. **Voiture au-delà de 60 min : impossible en API publique.** Le serveur
-   répond `3004 — Parameter 'range=...' is out of range`. Les seuils 70 à 120
-   min sont refusés **en amont**, listés avec leur motif, et laissés vides.
-   L'algorithme *fastisochrones* qui lève ce plafond n'est activé que sur les
-   instances auto-hébergées.
-2. **Marche : les douze seuils passent** (plafond à 20 h). Le mode piéton offre
-   donc la série complète dès l'API publique.
-3. **10 intervalles maximum :** les 12 seuils sont automatiquement découpés en
-   deux requêtes, puis recombinés.
-4. **`total_pop` d'ORS n'est jamais utilisé** : cet attribut repose sur GHSL,
-   pas sur WorldPop. Toutes les populations affichées viennent de la somme
-   zonale WorldPop faite par l'application.
-
-### Obtenir réellement 70 → 120 minutes en voiture
-
-Une instance dédiée est nécessaire. Le fichier
-[`docker-compose.ors.yml`](docker-compose.ors.yml) fournit une configuration
-prête, dont le réglage décisif :
+Le fichier [`docker-compose.ors.yml`](docker-compose.ors.yml) fournit une
+configuration ORS auto-hébergée pour lever la limite motorisée publique :
 
 ```yaml
-ors.endpoints.isochrones.maximum_range_time: 7200   # 120 minutes
+ors.endpoints.isochrones.maximum_range_time: 7200
 ors.endpoints.isochrones.maximum_intervals: 12
 ors.engine.profiles.driving-car.preparation.methods.fastisochrones.enabled: "true"
 ```
 
-Puis `ORS_BASE_URL = "http://localhost:8080/ors"` dans les secrets. L'application
-cesse alors de présumer un plafond et transmet les douze seuils.
+### Comparaison des backends
 
-### Alternatives évaluées
+| Critère | Valhalla FOSSGIS (défaut) | ORS public | Instance dédiée |
+|---|---|---|---|
+| Secret | **aucun** | `ORS_API_KEY` | selon le déploiement |
+| 120 min voiture | **oui** | non, 60 min max | oui si configurée |
+| Contours/appel | 4 (12 = 3 appels) | 10 (12 = 2 appels) | configurable |
+| Sens vers la structure | `reverse: true` | `location_type: destination` | idem moteur |
+| Comparabilité au mode 1 HeiGIT | moteur différent | **même famille ORS** | ORS : oui |
+| Usage recommandé | démonstration légère, cache | quota ORS et comparaison | production/intensif |
 
-| Moteur | 70–120 min voiture | Marche | Coût d'infrastructure | Verdict |
-|---|---|---|---|---|
-| **ORS public** | ❌ | ✅ | nul | défaut, avec limite affichée |
-| **ORS auto-hébergé** | ✅ | ✅ | 4–16 Go RAM | **recommandé** pour la série complète |
-| Valhalla | ✅ (`max_time_contour` à régler) | ✅ | 2–4 Go RAM, tuiles légères | viable, mais rompt la comparabilité avec le mode 1 |
-| GraphHopper | ✅ (extension isochrone) | ✅ | 4–8 Go RAM | licence de l'extension à vérifier |
-| OSRM | ❌ pas d'isochrones natives | — | — | écarté |
-
-**Jamais de substitut.** Un seuil non calculé reste absent des résultats, avec
-son motif. Aucun cercle, aucun tampon, aucune extrapolation ne le remplace —
-l'outil de dessin de cercle est même désactivé sur les cartes.
+Le sélecteur latéral affiche pour chaque choix le besoin de clé, le seuil
+maximum, le nombre de contours par requête, l'unité temporelle et le sens de
+calcul. **Jamais de substitut :** un seuil non calculé reste absent avec son
+motif ; aucun cercle, tampon, aléa ou extrapolation ne le remplace.
 
 ---
 
@@ -219,24 +257,33 @@ cd Health_fac_access_time
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-cp .streamlit/secrets.toml.example .streamlit/secrets.toml
-# renseigner ORS_API_KEY
-
 streamlit run app.py
 ```
 
-Ouvrir <http://localhost:8501>.
+Ouvrir <http://localhost:8501>. **Aucune clé n'est nécessaire** : Valhalla
+FOSSGIS est sélectionné par défaut et les deux modes fonctionnent immédiatement.
 
-Sans clé ORS, le **mode 1 reste entièrement fonctionnel** ; seul le calcul
-d'isochrones du mode 2 est désactivé, avec un message explicite.
+Configuration facultative dans `.streamlit/secrets.toml` ou l'environnement :
+
+```toml
+# Ajoute openrouteservice au sélecteur
+ORS_API_KEY = "..."
+# ORS_BASE_URL = "https://mon-ors.example/ors"
+
+# Cible une instance Valhalla dédiée compatible
+# VALHALLA_BASE_URL = "https://mon-valhalla.example/isochrone"
+# VALHALLA_ENABLED = "true"
+```
 
 ### Tests
 
 ```bash
-pytest -q          # 143 tests
+pytest -q
+node tests/map_component_harness.js /chemin/vers/map.html  # 9 scénarios JS
 ```
 
-Couverture : parsing CSV et variantes de colonnes, validation des coordonnées,
+Couverture : parcours `streamlit.testing.v1.AppTest`, protocoles Valhalla et
+ORS, découpage 4 × 3, sens inverse, erreurs 151/152/429, parsing CSV et variantes de colonnes, validation des coordonnées,
 reprojection (et refus d'un fichier sans CRS), tri et emboîtement des seuils,
 population cumulée, population par intervalle, absence de valeur négative,
 union de plusieurs zones, non-double-comptage, gestion du NoData, jointure
@@ -291,7 +338,8 @@ combinée avec chevauchements, extension spatiale, profil démographique.
 couronnes, GeoPackage multi-couches (`isochrones_cumulees`, `couronnes`,
 `structures`, `tableau_long`, `metadonnees`), rapport HTML imprimable en PDF, et
 métadonnées JSON. Chaque export embarque : structure, coordonnées, mode de
-déplacement, seuil, population cumulée, population par intervalle, superficie,
+déplacement, seuil, **seuil précédent réel** (`seuil_precedent_min`), population
+cumulée, population par intervalle, superficie,
 source et année WorldPop, moteur et version de routage, date du calcul, système
 de coordonnées et avertissements méthodologiques.
 
@@ -320,6 +368,23 @@ pointer vers un volume persistant en production.
 **Secrets.** Aucune clé n'est écrite dans le dépôt. Lecture par `st.secrets`
 puis variables d'environnement ; `.streamlit/secrets.toml` est ignoré par Git.
 
+### Dépannage du routage et des cartes
+
+| Symptôme | Diagnostic / action |
+|---|---|
+| « Aucun moteur de routage utilisable » | enlever `VALHALLA_ENABLED=false`, vérifier `VALHALLA_BASE_URL`, ou ajouter `ORS_API_KEY` |
+| Valhalla `151` | le seuil excède 120 min ; il restera vide, sans extrapolation |
+| Valhalla `152` | serveur incompatible ou limite différente ; l'application envoie normalement des lots de quatre maximum |
+| HTTP `429` | attendre avant de relancer, réduire structures/seuils et conserver `HEALTH_ACCESS_CACHE_DIR` |
+| Erreur liée à `reverse` | l'instance ne prend pas en charge l'isochrone inverse ; aucune bascule silencieuse vers le sens départ n'est faite |
+| ORS `3004` | portée publique dépassée (60 min voiture) ; choisir Valhalla ou une instance ORS dédiée |
+| Isochrone absente | lire le motif par seuil : point hors réseau, zone non couverte ou géométrie absente ; aucun substitut n'est créé |
+| PMTiles visibles mais fond cartographique indisponible | les couches restent indépendantes : le style MapLibre est construit inline par `buildStyle()` et ne dépend pas d'un document `tiles.openfreemap.org` |
+
+Pour diagnostiquer un comportement ancien, vider le cache Streamlit puis
+relancer ; ne supprimer le cache disque d'isochrones que si l'endpoint ou les
+données du moteur ont réellement changé.
+
 ---
 
 ## Déploiement
@@ -337,23 +402,24 @@ Le [`Dockerfile`](Dockerfile) est prêt : SDK `docker`, port 7860, cache sur
 `/data/cache`. L'en-tête YAML de ce README sert de configuration du Space.
 
 1. créer un Space **Docker** et y pousser ce dépôt ;
-2. Settings → Variables and secrets → `ORS_API_KEY` (et `ORS_BASE_URL` si
-   instance dédiée) ;
-3. activer le disque persistant pour conserver le cache WorldPop.
+2. aucune variable secrète n'est requise pour Valhalla ; ajouter `ORS_API_KEY`
+   seulement pour proposer aussi ORS ;
+3. activer le disque persistant pour conserver les caches WorldPop et routage.
 
 ### Streamlit Community Cloud — limites à connaître
 
-Environ 1 Go de RAM, pas de disque persistant, pas de Docker. En pratique :
-raster **1 km obligatoire**, plafond ORS public de 60 min en voiture, et cache
-perdu à chaque redémarrage. Convient à une démonstration, pas à une production
-sur grand pays en 100 m.
+Environ 1 Go de RAM, pas de disque persistant, pas de Docker. Le mode 2
+fonctionne **sans secret** avec Valhalla FOSSGIS jusqu'à 120 minutes, mais le
+raster **1 km est fortement recommandé** et les caches sont perdus à chaque
+redémarrage. Le serveur FOSSGIS restant mutualisé, cette configuration convient
+à une démonstration légère, pas à une production concurrente ni à de grands lots.
 
 ### Architecture séparée, si les limites deviennent bloquantes
 
 Nécessaire au-delà de quelques pays en 100 m ou pour un usage concurrent :
 
 ```
-Streamlit (UI)  →  FastAPI (calcul, files d'attente)  →  ORS dédié (isochrones)
+Streamlit (UI)  →  FastAPI (calcul, files d'attente)  →  Valhalla ou ORS dédié
                               ↓
                    Stockage objet S3 (rasters COG)  +  cache Redis/disque
 ```
@@ -365,12 +431,14 @@ une infrastructure supplémentaire.
 
 ---
 
-## Fonctionnalités impossibles sans infrastructure supplémentaire
+## Fonctionnalités qui exigent une infrastructure supplémentaire
 
 Signalées explicitement, conformément au cahier des charges :
 
-1. **Seuils 70–120 min en voiture** — exigent une instance openrouteservice
-   auto-hébergée. En API publique, ces seuils restent vides avec leur motif.
+1. **Calcul intensif ou fortement concurrent** — ne doit pas reposer sur le
+   serveur de démonstration FOSSGIS. Les seuils 70–120 min en voiture sont bien
+   disponibles en démonstration avec Valhalla, mais une production en volume
+   exige Valhalla ou ORS auto-hébergé.
 2. **Profil démographique par sexe et âge** — implémenté
    (`population.demographic_profile`), mais nécessite le téléchargement de 36
    rasters nationaux par pays et par année. Inutilisable sur une plateforme sans
@@ -414,14 +482,14 @@ src/
   models.py                 Facility, IsochroneBand, RasterMetadata, AnalysisMetadata
   data_catalog.py           catalogue et statistiques OpenAccessLens (mode 1)
   facility_io.py            import CSV / GeoJSON / GPKG / SHP, validation, reprojection
-  routing.py                client openrouteservice, capacités, quotas, cache
+  routing.py                clients Valhalla/ORS, capacités, sens, quotas, cache
   isochrones.py             emboîtement, couronnes, superficies (mode 2)
   population.py             WorldPop : URL, téléchargement, métadonnées, somme zonale
   spatial_analysis.py       tableaux, unions, non-double-comptage, cohérence
   maps.py                   MapLibre/PMTiles (mode 1), Folium (mode 2)
   charts.py                 graphiques Plotly
   exports.py                CSV, GeoJSON, GeoPackage, rapport HTML, métadonnées
-tests/                      143 tests
+tests/                      tests Python, AppTest et banc JavaScript (9 scénarios)
 scripts/                    outil hors ligne de vectorisation raster HeiGIT
 Dockerfile                  Hugging Face Spaces
 docker-compose.ors.yml      instance openrouteservice dédiée (seuils > 60 min)
@@ -434,7 +502,8 @@ docker-compose.ors.yml      instance openrouteservice dédiée (seuils > 60 min)
 
 * [OpenAccessLens](https://giscience.github.io/open-access-lens/) — HeiGIT, GPLv3
 * [HeiGIT sur HDX](https://data.humdata.org/organization/heidelberg-institute-for-geoinformation-technology)
-* [openrouteservice](https://openrouteservice.org/) — HeiGIT
+* [Valhalla](https://valhalla.github.io/valhalla/) et son serveur de démonstration FOSSGIS — backend sans clé par défaut
+* [openrouteservice](https://openrouteservice.org/) — HeiGIT, backend facultatif
 * [WorldPop](https://www.worldpop.org/) — CC BY 4.0
 * [OpenStreetMap](https://www.openstreetmap.org/) — ODbL
 

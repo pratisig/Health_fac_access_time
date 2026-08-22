@@ -10,7 +10,6 @@ Deux rendus, correspondant aux deux modes, sans mélange des géométries :
 
 from __future__ import annotations
 
-import base64
 import json
 from typing import Any, Sequence
 
@@ -18,7 +17,6 @@ import folium
 from folium.plugins import Draw, Fullscreen, MarkerCluster
 
 from .config import (
-    BASEMAP_STYLE,
     HEALTH_CATEGORIES,
     THRESHOLDS_SECONDS,
     color_for_facility,
@@ -34,24 +32,28 @@ from .models import Facility, FacilityIsochrones
 
 
 def render_html_component(html: str, *, height: int = 640) -> None:
-    """Affiche un document HTML autonome dans Streamlit.
+    """Affiche un document HTML autonome dans l'iframe Streamlit actuelle.
 
-    ``st.components.v1.html`` est déprécié dans les versions récentes ; un repli
-    par ``st.iframe`` sur une URL ``data:`` garantit que la carte MapLibre
-    continue de fonctionner après son retrait.
+    ``st.iframe`` remplace l'ancien composant HTML V1 et accepte directement un
+    document HTML. Le repli importé ci-dessous conserve la compatibilité avec
+    les versions de Streamlit antérieures à cette API, sans appel via l'attribut
+    obsolète ``st.components``.
     """
     import streamlit as st
 
-    component = getattr(getattr(st, "components", None), "v1", None)
-    if component is not None and hasattr(component, "html"):
-        try:
-            component.html(html, height=height)
-            return
-        except Exception:  # pragma: no cover - dépend de la version
-            pass
+    iframe = getattr(st, "iframe", None)
+    if callable(iframe):
+        iframe(html, height=height, width="stretch")
+        return
 
-    encoded = base64.b64encode(html.encode("utf-8")).decode("ascii")
-    st.iframe(f"data:text/html;base64,{encoded}", height=height)
+    # Compatibilité Streamlit < 1.56 uniquement. Cette branche peut être retirée
+    # lorsque la contrainte minimale du paquet sera définitivement imposée.
+    try:  # pragma: no cover - uniquement sur anciennes versions de Streamlit
+        from streamlit.components.v1 import html as legacy_html
+
+        legacy_html(html, height=height)
+    except (ImportError, AttributeError) as error:  # pragma: no cover
+        raise RuntimeError("Aucune API Streamlit disponible pour afficher la carte") from error
 
 
 #: Script du composant territorial, gardé hors f-string pour éviter tout
@@ -177,6 +179,33 @@ function fillColour(seconds) {
   return CONFIG.colours[key] || '#9e9e9e';
 }
 
+// Le style MapLibre est construit ici : aucun document de style distant ne
+// peut empêcher les couches PMTiles de s'initialiser. Seules les tuiles raster
+// OSM restent une ressource de fond facultative ; les isochrones sont ajoutées
+// indépendamment après le chargement de ce style local.
+function buildStyle() {
+  return {
+    version: 8,
+    sources: {
+      osm: {
+        type: 'raster',
+        tiles: [
+          'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+          'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
+          'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png'
+        ],
+        tileSize: 256,
+        attribution: '© OpenStreetMap contributors'
+      }
+    },
+    layers: [
+      { id: 'background', type: 'background', paint: { 'background-color': '#e9edf0' } },
+      { id: 'osm', type: 'raster', source: 'osm', minzoom: 0, maxzoom: 19,
+        paint: { 'raster-opacity': 0.82 } }
+    ]
+  };
+}
+
 async function main() {
   stage = 'chargement des bibliothèques';
   setStatus('Chargement des bibliothèques cartographiques…');
@@ -198,7 +227,7 @@ async function main() {
 
   const map = new maplibregl.Map({
     container: 'map',
-    style: CONFIG.style,
+    style: buildStyle(),
     center: CONFIG.centre,
     zoom: CONFIG.zoom,
     attributionControl: { compact: true }
@@ -370,7 +399,6 @@ def territorial_map_html(
     payload = json.dumps(
         {
             "pmtiles": url,
-            "style": BASEMAP_STYLE,
             "selected": selected,
             "thresholds": [int(value) for value in THRESHOLDS_SECONDS],
             "colours": {
@@ -508,14 +536,26 @@ def catchment_map(
                 band.threshold_seconds // 600
             )
 
+            previous_minutes = (
+                band.previous_threshold_seconds // 60
+                if band.previous_threshold_seconds is not None
+                else 0
+            )
+            interval_label = f"{previous_minutes}–{band.threshold_minutes} min"
+            displayed_zone = (
+                f"Couronne {interval_label}"
+                if show_rings
+                else f"Zone ≤ {band.threshold_minutes} min"
+            )
             popup = folium.Popup(
                 folium.Html(
                     f"<div style='font-family:system-ui;font-size:13px;min-width:230px'>"
                     f"<strong>{result.facility.name}</strong><br/>"
-                    f"<span style='color:#555'>Zone ≤ {band.threshold_minutes} min "
+                    f"<span style='color:#555'>{displayed_zone} "
                     f"({band.threshold_seconds} s)</span><hr style='margin:6px 0'/>"
                     f"Population cumulée : <strong>{_format_number(band.population_cumulative)}</strong><br/>"
-                    f"Population de la couronne : <strong>{_format_number(band.population_interval)}</strong><br/>"
+                    f"Population de la couronne {interval_label} : "
+                    f"<strong>{_format_number(band.population_interval)}</strong><br/>"
                     f"Superficie cumulée : {_format_number(band.area_km2_cumulative, ' km²')}<br/>"
                     f"Part de la population : "
                     f"{'non calculée' if band.population_share is None else f'{band.population_share:.2f} %'}<br/>"
@@ -538,7 +578,7 @@ def catchment_map(
                     }
                 ),
                 highlight_function=lambda _feature: {"weight": 3, "fillOpacity": 0.7},
-                tooltip=f"{result.facility.name} — ≤ {band.threshold_minutes} min",
+                tooltip=f"{result.facility.name} — {displayed_zone}",
                 popup=popup,
             ).add_to(group)
 

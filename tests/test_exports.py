@@ -36,7 +36,9 @@ from src.spatial_analysis import attach_population, combined_coverage, long_tabl
 from tests.test_routing import FakeResponse, FakeSession, isochrone_payload
 
 PIXEL = 0.01
-THRESHOLDS = [600, 1200, 1800]
+# Pas volontairement irrégulier : toutes les sorties doivent propager la borne
+# précédente réelle plutôt que supposer des couronnes fixes de dix minutes.
+THRESHOLDS = [600, 1800, 3600]
 
 
 @pytest.fixture
@@ -128,8 +130,8 @@ def test_csv_long_contient_la_tracabilite(pipeline):
     header = text.splitlines()[0]
 
     for column in (
-        "structure", "latitude", "longitude", "mode_deplacement", "seuil_min",
-        "population_cumulee", "population_intervalle", "superficie_km2",
+        "structure", "latitude", "longitude", "mode_deplacement", "seuil_precedent_min",
+        "seuil_min", "population_cumulee", "population_intervalle", "superficie_km2",
         "source_population", "annee_population", "moteur_routage",
         "version_moteur_routage", "date_calcul", "systeme_coordonnees", "avertissements",
     ):
@@ -137,6 +139,7 @@ def test_csv_long_contient_la_tracabilite(pipeline):
 
     assert "openrouteservice" in text
     assert "WorldPop" in text
+    assert list(frame["seuil_precedent_min"].drop_duplicates()) == [0, 10, 30]
 
 
 def test_csv_matrice_une_colonne_par_seuil(pipeline):
@@ -148,7 +151,7 @@ def test_csv_matrice_une_colonne_par_seuil(pipeline):
 
     assert any("metrique" in line for line in commented)
     assert any("date_calcul" in line for line in commented)
-    assert header.split(",")[1:] == ["10 min", "20 min", "30 min"]
+    assert header.split(",")[1:] == ["10 min", "30 min", "60 min"]
     assert len([line for line in lines if not line.startswith("#")]) == 3  # entête + 2 structures
 
 
@@ -156,6 +159,7 @@ def test_csv_matrice_par_intervalle(pipeline):
     _, frame, _, metadata = pipeline
     payload = matrix_csv(frame, metadata, "population_intervalle").decode("utf-8-sig")
     assert "population_intervalle" in payload
+    assert "0–10 min,10–30 min,30–60 min" in payload
 
 
 # --------------------------------------------------------------------------- #
@@ -174,8 +178,15 @@ def test_geojson_valide_et_documente(pipeline):
     assert document["metadata"]["avertissements_methodologiques"]
 
     properties = document["features"][0]["properties"]
-    for key in ("structure", "seuil_minutes", "population_cumulee", "superficie_km2"):
+    for key in (
+        "structure", "seuil_precedent_min", "seuil_minutes",
+        "population_cumulee", "superficie_km2",
+    ):
         assert key in properties
+    assert [
+        feature["properties"]["seuil_precedent_min"]
+        for feature in document["features"][:3]
+    ] == [0, 10, 30]
 
 
 def test_geojson_des_couronnes_est_distinct(pipeline):
@@ -199,8 +210,13 @@ def test_geopackage_multicouches(pipeline, tmp_path):
     assert {"isochrones_cumulees", "couronnes", "structures", "metadonnees"} <= layers
 
     zones = gpd.read_file(path, layer="isochrones_cumulees")
+    rings = gpd.read_file(path, layer="couronnes")
+    long_export = gpd.read_file(path, layer="tableau_long")
     assert len(zones) == 6
     assert zones.crs.to_string() == "EPSG:4326"
+    assert set(zones["seuil_precedent_min"]) == {0, 10, 30}
+    assert set(rings["seuil_precedent_min"]) == {0, 10, 30}
+    assert set(long_export["seuil_precedent_min"]) == {0, 10, 30}
 
 
 def test_geodataframe_des_isochrones(pipeline):
@@ -209,7 +225,8 @@ def test_geodataframe_des_isochrones(pipeline):
 
     assert frame.crs.to_string() == "EPSG:4326"
     assert frame.geometry.is_valid.all()
-    assert set(frame["seuil_minutes"]) == {10, 20, 30}
+    assert set(frame["seuil_minutes"]) == {10, 30, 60}
+    assert list(frame["seuil_precedent_min"].iloc[:3]) == [0, 10, 30]
 
 
 # --------------------------------------------------------------------------- #
@@ -230,6 +247,10 @@ def test_rapport_html(pipeline):
     assert "Limites méthodologiques" in html
     assert "Seuils non calculés" in html
     assert "openrouteservice" in html
+    assert "0–10 min" in html
+    assert "10–30 min" in html
+    assert "30–60 min" in html
+    assert "seuil_precedent_min" in html
     assert METHODOLOGICAL_WARNINGS[0][:40] in html
 
 
@@ -237,7 +258,7 @@ def test_metadonnees_json(pipeline):
     _, _, _, metadata = pipeline
     document = json.loads(metadata_json(metadata, {"indicateurs": {"a": 1}}))
 
-    assert document["seuils_minutes"] == [10, 20, 30]
+    assert document["seuils_minutes"] == [10, 30, 60]
     assert document["systeme_coordonnees"].startswith("EPSG:4326")
     assert document["raster_population"]["unite_pixel"] == "personnes par pixel"
     assert document["indicateurs"] == {"a": 1}
@@ -256,13 +277,19 @@ def test_nom_de_fichier_horodate():
 
 def test_carte_mode2_ne_contient_aucun_cercle(pipeline):
     results, _, _, _ = pipeline
-    html = catchment_map(results, THRESHOLDS,
-                         facilities=[result.facility for result in results]).get_root().render()
+    html = catchment_map(
+        results,
+        THRESHOLDS,
+        facilities=[result.facility for result in results],
+        show_rings=True,
+    ).get_root().render()
 
     assert "L.circle(" not in html
     assert "L.Circle(" not in html
     assert "Hôpital régional" in html
     assert "Population cumulée" in html
+    assert "Couronne 10–30 min" in html
+    assert "Couronne 30–60 min" in html
 
 
 def test_carte_mode1_utilise_les_pmtiles_officiels():

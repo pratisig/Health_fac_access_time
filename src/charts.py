@@ -58,14 +58,32 @@ def cumulative_curve(long_frame: pd.DataFrame) -> go.Figure:
     return figure
 
 
+def _with_interval_labels(frame: pd.DataFrame) -> pd.DataFrame:
+    """Ajoute les bornes des couronnes sans supposer un pas de temps fixe."""
+    labelled = frame.copy()
+    if "seuil_precedent_min" not in labelled.columns:
+        # Compatibilité avec un tableau externe ancien : la borne est le seuil
+        # précédent réellement présent pour la même structure, jamais ``seuil-10``.
+        labelled = labelled.sort_values(["structure", "seuil_min"])
+        labelled["seuil_precedent_min"] = (
+            labelled.groupby("structure")["seuil_min"].shift(fill_value=0)
+        )
+    labelled["intervalle"] = labelled.apply(
+        lambda row: (
+            f"{int(row['seuil_precedent_min'])}–{int(row['seuil_min'])} min"
+        ),
+        axis=1,
+    )
+    return labelled
+
+
 def interval_histogram(long_frame: pd.DataFrame) -> go.Figure:
-    """Histogramme de la population propre à chaque couronne."""
+    """Histogramme de la population propre à chaque couronne réelle."""
     if long_frame.empty or long_frame["population_intervalle"].isna().all():
         return _empty_figure("Population par intervalle non calculée.")
 
-    frame = long_frame.dropna(subset=["population_intervalle"]).copy()
-    frame["intervalle"] = frame.apply(
-        lambda row: f"{int(row['seuil_min']) - 10}–{int(row['seuil_min'])} min", axis=1
+    frame = _with_interval_labels(
+        long_frame.dropna(subset=["population_intervalle"])
     )
 
     figure = px.bar(
@@ -93,12 +111,15 @@ def cumulative_versus_interval(long_frame: pd.DataFrame, structure: str) -> go.F
     frame = long_frame[long_frame["structure"] == structure].sort_values("seuil_min")
     if frame.empty or frame["population_cumulee"].isna().all():
         return _empty_figure()
+    frame = _with_interval_labels(frame)
 
     figure = go.Figure()
     figure.add_bar(
         x=frame["seuil_min"],
         y=frame["population_intervalle"],
         name="Population de la couronne",
+        customdata=frame["intervalle"],
+        hovertemplate="Couronne %{customdata}<br>Population %{y:,.0f}<extra></extra>",
         marker_color=[color_for_threshold(int(value) * 60) for value in frame["seuil_min"]],
     )
     figure.add_scatter(

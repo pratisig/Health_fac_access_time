@@ -24,7 +24,7 @@ from shapely.ops import unary_union
 
 from .config import EQUAL_AREA_CRS, WGS84
 from .models import Facility, FacilityIsochrones, IsochroneBand
-from .routing import ORSClient, RoutingError
+from .routing import RoutingClient, RoutingError
 
 
 def _clean(geometry: BaseGeometry | None) -> BaseGeometry | None:
@@ -94,7 +94,7 @@ def area_km2(geometry: BaseGeometry | None) -> float | None:
 
 def compute_facility_isochrones(
     facility: Facility,
-    client: ORSClient,
+    client: RoutingClient,
     profile: str,
     thresholds_seconds: Sequence[int],
     *,
@@ -164,7 +164,7 @@ def compute_facility_isochrones(
 
 def compute_all(
     facilities: Sequence[Facility],
-    client: ORSClient,
+    client: RoutingClient,
     profile: str,
     thresholds_seconds: Sequence[int],
     *,
@@ -224,9 +224,9 @@ def to_geodataframe(
                     "mode_deplacement": result.profile,
                     "seuil_secondes": band.threshold_seconds,
                     "seuil_minutes": band.threshold_minutes,
-                    "seuil_precedent_minutes": (
+                    "seuil_precedent_min": (
                         band.previous_threshold_seconds // 60
-                        if band.previous_threshold_seconds
+                        if band.previous_threshold_seconds is not None
                         else 0
                     ),
                     "type_zone": "cumulée" if geometry == "cumulative" else "couronne",

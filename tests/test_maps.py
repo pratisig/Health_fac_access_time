@@ -52,6 +52,12 @@ def test_cdn_de_secours_configures(html):
         assert any("jsdelivr" in url for url in config["cdn"][key])
 
 
+def test_style_maplibre_est_construit_inline(html):
+    assert "function buildStyle()" in html
+    assert "style: buildStyle()" in html
+    assert "tiles.openfreemap.org" not in html
+
+
 def test_chien_de_garde_present(html):
     """Sans chien de garde, un blocage réseau fige le message de chargement."""
     assert "Délai de 25 s dépassé" in html
@@ -80,11 +86,11 @@ def test_legende_et_attribut_range(html):
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js absent")
 def test_aucun_scenario_ne_reste_bloque_sur_chargement(html, tmp_path):
-    """Huit causes d'échec, huit messages explicites.
+    """Neuf scénarios couvrent succès, style local et erreurs explicites.
 
-    Scénarios couverts par le banc d'essai : succès, CDN injoignable, archive
-    404, CORS refusé, fond de carte bloqué, archive sans couche vectorielle,
-    aucune entité au zoom courant, valeurs de `range` inattendues.
+    Scénarios couverts : succès, style inline autonome, CDN injoignable, archive
+    404, CORS refusé, chargement de carte bloqué, archive sans couche vectorielle,
+    aucune entité au zoom courant et valeurs de ``range`` inattendues.
     """
     page = tmp_path / "map.html"
     page.write_text(html, encoding="utf-8")
@@ -96,4 +102,4 @@ def test_aucun_scenario_ne_reste_bloque_sur_chargement(html, tmp_path):
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "ÉCHEC" not in result.stdout
-    assert result.stdout.count("OK ") == 8
+    assert result.stdout.count("OK ") == 9

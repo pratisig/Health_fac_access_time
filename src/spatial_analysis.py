@@ -138,6 +138,7 @@ LONG_COLUMNS: tuple[str, ...] = (
     "latitude",
     "longitude",
     "mode_deplacement",
+    "seuil_precedent_min",
     "seuil_min",
     "seuil_secondes",
     "population_cumulee",
@@ -162,6 +163,11 @@ def long_table(results: Iterable[FacilityIsochrones]) -> pd.DataFrame:
                 "latitude": result.facility.latitude,
                 "longitude": result.facility.longitude,
                 "mode_deplacement": result.profile,
+                "seuil_precedent_min": (
+                    band.previous_threshold_seconds // 60
+                    if band.previous_threshold_seconds is not None
+                    else 0
+                ),
                 "seuil_min": band.threshold_minutes,
                 "seuil_secondes": band.threshold_seconds,
                 "population_cumulee": band.population_cumulative,
@@ -197,9 +203,34 @@ MATRIX_METRICS: dict[str, str] = {
 
 
 def matrix_table(long_frame: pd.DataFrame, metric: str = "population_cumulee") -> pd.DataFrame:
-    """Format matrice : une ligne par structure, une colonne par seuil."""
+    """Format matrice : une ligne par structure, une colonne par seuil/couronne.
+
+    Pour une métrique d'intervalle, la borne précédente réellement calculée est
+    incluse dans le libellé (par exemple ``0–30 min`` puis ``30–60 min``). Il
+    n'est jamais supposé que les seuils sont espacés de dix minutes.
+    """
     if long_frame.empty or metric not in long_frame.columns:
         return pd.DataFrame()
+
+    interval_metrics = {"population_intervalle", "superficie_intervalle_km2"}
+    if metric in interval_metrics and "seuil_precedent_min" in long_frame.columns:
+        source = long_frame.copy()
+        source["intervalle"] = source.apply(
+            lambda row: (
+                f"{int(row['seuil_precedent_min'])}–{int(row['seuil_min'])} min"
+            ),
+            axis=1,
+        )
+        order = (
+            source[["intervalle", "seuil_min"]]
+            .drop_duplicates()
+            .sort_values("seuil_min")["intervalle"]
+            .tolist()
+        )
+        pivot = source.pivot_table(
+            index="structure", columns="intervalle", values=metric, aggfunc="first"
+        )
+        return pivot.reindex(order, axis=1).reset_index()
 
     pivot = long_frame.pivot_table(
         index="structure", columns="seuil_min", values=metric, aggfunc="first"
@@ -354,7 +385,10 @@ def summary_indicators(
 
     if not coverage.empty and coverage["population_union"].notna().any():
         valid = coverage.dropna(subset=["population_union"])
-        largest = valid.iloc[valid["seuil_min"].idxmax()] if len(valid) else None
+        # ``idxmax`` renvoie un label d'index. Après ``dropna``, cet index peut
+        # être non contigu : il faut donc sélectionner avec ``loc`` et non
+        # ``iloc`` (qui interpréterait le label comme une position).
+        largest = valid.loc[valid["seuil_min"].idxmax()] if len(valid) else None
         if largest is not None:
             indicators["population_couverte_max"] = float(largest["population_union"])
             indicators["seuil_max_min"] = int(largest["seuil_min"])
